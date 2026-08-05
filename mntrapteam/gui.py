@@ -28,7 +28,7 @@ class DictModel(QAbstractTableModel):
 class MainWindow(QMainWindow):
     def __init__(self,db,rules,settings):
         super().__init__(); self.db=db; self.rules=rules; self.settings=settings; self.season=int(settings.get('season',2026)); self.ts=TeamService(db,rules); self.ex=ExportService(self.ts)
-        self.setWindowTitle('MNTrapTeam 1.3'); self.resize(1320,820); self.setStyleSheet(DARK)
+        self.setWindowTitle('MNTrapTeam 1.5'); self.resize(1320,820); self.setStyleSheet(DARK)
         self.tabs=QTabWidget(); self.setCentralWidget(self.tabs)
         self.dashboard=self.make_dashboard(); self.shooters=self.make_shooters(); self.imports=self.make_imports(); self.standings=self.make_standings(); self.projections=self.make_projections(); self.archive=self.make_archive(); self.settings_tab=self.make_settings()
         self.make_menu(); self.refresh_all()
@@ -64,12 +64,12 @@ class MainWindow(QMainWindow):
             self.import_table.setModel(DictModel(rows,[('filename','File'),('kind','Type'),('rows_read','Rows'),('rows_imported','Imported'),('imported_at','Imported at'),('warnings','Warnings')]))
     def refresh_dashboard(self):
         rows=self.ts.season_rows(self.season); elig=sum(1 for r in rows if r['eligibility'].eligible); self.cards.setText(f'<h2>{self.season} Minnesota State Team Dashboard</h2><b>{len(rows)}</b> tracked shooters &nbsp;&nbsp; <b>{elig}</b> currently eligible &nbsp;&nbsp; <b>{len(self.db.query("SELECT id FROM imports"))}</b> imported files')
-        top=sorted(rows,key=lambda r:r['hoa'],reverse=True)[:20]; self.dash_table.setModel(DictModel(top,[('display_name','Shooter'),('category','Category'),('hoa','HOA'),('singles_targets','Singles'),('handicap_targets','Handicap'),('doubles_targets','Doubles')]))
+        top=sorted(rows,key=lambda r:r['hoa'],reverse=True)[:20]; self.dash_table.setModel(DictModel(top,[('display_name','Shooter'),('category','Category'),('hoa','HOA'),('cut_line_hoa','Cut HOA'),('hoa_gap_to_cut','Gap to Cut'),('birds_per_300_gap','Birds / 300'),('singles_targets','Singles'),('handicap_targets','Handicap'),('doubles_targets','Doubles')]))
     def refresh_shooters(self):
         q='%' + (self.q.text() if hasattr(self,'q') else '') + '%'; rows=self.db.query('SELECT * FROM shooters WHERE display_name LIKE ? OR ata_number LIKE ? ORDER BY last_name,first_name',(q,q)); self.shooter_rows=rows; self.shooter_table.setModel(DictModel(rows,[('ata_number','ATA #'),('display_name','Name'),('category','Category'),('state','State'),('yardage','Yardage')]))
     def refresh_standings(self):
         if not hasattr(self,'team_box'): return
-        rows=self.ts.rankings(self.season,self.team_box.currentText()); self.stand_table.setModel(DictModel(rows,[('rank','Rank'),('selected','Team'),('eligible','Eligible'),('display_name','Shooter'),('ata_number','ATA #'),('hoa','HOA'),('singles_targets','Singles'),('handicap_targets','Handicap'),('doubles_targets','Doubles'),('mn_clubs','MN Clubs'),('eligibility_reasons','Missing requirements')]))
+        rows=self.ts.rankings(self.season,self.team_box.currentText()); self.stand_table.setModel(DictModel(rows,[('rank','Rank'),('selected','Team'),('eligible','Eligible'),('display_name','Shooter'),('ata_number','ATA #'),('hoa','HOA'),('cut_line_hoa','Cut HOA'),('hoa_gap_to_cut','Gap to Cut'),('birds_per_300_gap','Birds / 300'),('singles_targets','Singles'),('handicap_targets','Handicap'),('doubles_targets','Doubles'),('mn_clubs','MN Clubs'),('eligibility_reasons','Missing requirements')]))
     def refresh_projection_shooters(self):
         if not hasattr(self,'proj_shooter'): return
         old=self.proj_shooter.currentData(); self.proj_shooter.clear()
