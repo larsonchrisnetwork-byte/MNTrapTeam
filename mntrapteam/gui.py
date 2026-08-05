@@ -28,7 +28,7 @@ class DictModel(QAbstractTableModel):
 class MainWindow(QMainWindow):
     def __init__(self,db,rules,settings):
         super().__init__(); self.db=db; self.rules=rules; self.settings=settings; self.season=int(settings.get('season',2026)); self.ts=TeamService(db,rules); self.ex=ExportService(self.ts)
-        self.setWindowTitle('MNTrapTeam 1.0'); self.resize(1320,820); self.setStyleSheet(DARK)
+        self.setWindowTitle('MNTrapTeam 1.3'); self.resize(1320,820); self.setStyleSheet(DARK)
         self.tabs=QTabWidget(); self.setCentralWidget(self.tabs)
         self.dashboard=self.make_dashboard(); self.shooters=self.make_shooters(); self.imports=self.make_imports(); self.standings=self.make_standings(); self.projections=self.make_projections(); self.archive=self.make_archive(); self.settings_tab=self.make_settings()
         self.make_menu(); self.refresh_all()
@@ -41,11 +41,11 @@ class MainWindow(QMainWindow):
         self.cards=QLabel(); self.cards.setTextFormat(Qt.RichText); self.cards.setMinimumHeight(130); v.addWidget(self.cards)
         self.dash_table=QTableView(); v.addWidget(self.dash_table); self.tabs.addTab(w,'Dashboard'); return w
     def make_shooters(self):
-        w=QWidget(); v=QVBoxLayout(w); form=QHBoxLayout(); self.q=QLineEdit(); self.q.setPlaceholderText('Search name or ATA number'); self.q.textChanged.connect(self.refresh_shooters); form.addWidget(self.q); add=QPushButton('Add / edit shooter'); add.clicked.connect(self.edit_shooter); form.addWidget(add); v.addLayout(form); self.shooter_table=QTableView(); self.shooter_table.doubleClicked.connect(self.edit_shooter); v.addWidget(self.shooter_table); self.tabs.addTab(w,'Shooters'); return w
+        w=QWidget(); v=QVBoxLayout(w); form=QHBoxLayout(); self.q=QLineEdit(); self.q.setPlaceholderText('Search name or ATA number'); self.q.textChanged.connect(self.refresh_shooters); form.addWidget(self.q); add=QPushButton('Add / edit shooter'); add.clicked.connect(self.edit_shooter); form.addWidget(add); stats=QPushButton('Edit season stats'); stats.clicked.connect(self.edit_stats); form.addWidget(stats); v.addLayout(form); self.shooter_table=QTableView(); self.shooter_table.doubleClicked.connect(self.edit_shooter); v.addWidget(self.shooter_table); self.tabs.addTab(w,'Shooters'); return w
     def make_imports(self):
         w=QWidget(); v=QVBoxLayout(w); info=QLabel('Import official ShootATA exports or ShootScoreBoard CSV/XLSX/HTML/PDF reports. ShootScoreBoard data is treated as unofficial.'); info.setWordWrap(True); v.addWidget(info)
         row=QHBoxLayout(); b1=QPushButton('Import official ShootATA file'); b1.clicked.connect(self.import_official); row.addWidget(b1); b2=QPushButton('Import ShootScoreBoard report'); b2.clicked.connect(self.import_scoreboard); row.addWidget(b2); b3=QPushButton('Open ShootATA login'); b3.clicked.connect(open_shootata_login); row.addWidget(b3); row.addStretch(); v.addLayout(row)
-        self.import_log=QTextEdit(); self.import_log.setReadOnly(True); v.addWidget(self.import_log); self.tabs.addTab(w,'Imports'); return w
+        self.import_log=QTextEdit(); self.import_log.setReadOnly(True); v.addWidget(self.import_log); self.import_table=QTableView(); v.addWidget(QLabel('Import history')); v.addWidget(self.import_table); self.tabs.addTab(w,'Imports'); return w
     def make_standings(self):
         w=QWidget(); v=QVBoxLayout(w); row=QHBoxLayout(); self.team_box=QComboBox(); self.team_box.addItems(self.rules.rules['teams']); self.team_box.currentTextChanged.connect(self.refresh_standings); row.addWidget(QLabel('Team')); row.addWidget(self.team_box); row.addStretch();
         for txt,fn in [('CSV',self.export_csv),('Excel all teams',self.export_all),('PDF',self.export_pdf)]: b=QPushButton('Export '+txt); b.clicked.connect(fn); row.addWidget(b)
@@ -57,7 +57,11 @@ class MainWindow(QMainWindow):
     def make_settings(self):
         w=QWidget(); f=QFormLayout(w); self.user_ata=QLineEdit(self.settings.get('user_ata_number','')); f.addRow('Your ATA number',self.user_ata); self.threshold=QSpinBox(); self.threshold.setRange(50,100); self.threshold.setValue(int(self.settings.get('fuzzy_match_threshold',88))); f.addRow('Name-match threshold',self.threshold); b=QPushButton('Save settings'); b.clicked.connect(self.save_settings); f.addRow(b); self.tabs.addTab(w,'Settings'); return w
     def change_season(self,y): self.season=y; self.refresh_all()
-    def refresh_all(self): self.refresh_dashboard(); self.refresh_shooters(); self.refresh_standings(); self.refresh_projection_shooters(); self.refresh_snapshots()
+    def refresh_all(self): self.refresh_dashboard(); self.refresh_shooters(); self.refresh_standings(); self.refresh_projection_shooters(); self.refresh_snapshots(); self.refresh_imports()
+    def refresh_imports(self):
+        if hasattr(self,'import_table'):
+            rows=self.db.query('SELECT filename,kind,rows_read,rows_imported,imported_at,warnings FROM imports ORDER BY id DESC LIMIT 100')
+            self.import_table.setModel(DictModel(rows,[('filename','File'),('kind','Type'),('rows_read','Rows'),('rows_imported','Imported'),('imported_at','Imported at'),('warnings','Warnings')]))
     def refresh_dashboard(self):
         rows=self.ts.season_rows(self.season); elig=sum(1 for r in rows if r['eligibility'].eligible); self.cards.setText(f'<h2>{self.season} Minnesota State Team Dashboard</h2><b>{len(rows)}</b> tracked shooters &nbsp;&nbsp; <b>{elig}</b> currently eligible &nbsp;&nbsp; <b>{len(self.db.query("SELECT id FROM imports"))}</b> imported files')
         top=sorted(rows,key=lambda r:r['hoa'],reverse=True)[:20]; self.dash_table.setModel(DictModel(top,[('display_name','Shooter'),('category','Category'),('hoa','HOA'),('singles_targets','Singles'),('handicap_targets','Handicap'),('doubles_targets','Doubles')]))
@@ -78,6 +82,28 @@ class MainWindow(QMainWindow):
         if idx.isValid() and idx.row()<len(self.shooter_rows): row=self.shooter_rows[idx.row()]
         d=QDialog(self); d.setWindowTitle('Shooter'); f=QFormLayout(d); ata=QLineEdit(row.get('ata_number','') if row else ''); name=QLineEdit(row.get('display_name','') if row else ''); cat=QComboBox(); cat.addItems(list(self.rules.rules['teams'])+['SUB_VET']); cat.setCurrentText(row.get('category','MEN') if row else 'MEN'); state=QLineEdit(row.get('state','MN') if row else 'MN'); f.addRow('ATA #',ata); f.addRow('Name',name); f.addRow('Category',cat); f.addRow('State',state); bb=QDialogButtonBox(QDialogButtonBox.Save|QDialogButtonBox.Cancel); bb.accepted.connect(d.accept); bb.rejected.connect(d.reject); f.addRow(bb)
         if d.exec() and name.text().strip(): self.db.upsert_shooter(ata.text(),name.text(),cat.currentText(),state.text()); self.refresh_all()
+    def edit_stats(self):
+        idx=self.shooter_table.currentIndex()
+        if not idx.isValid() or idx.row()>=len(self.shooter_rows):
+            QMessageBox.information(self,'Season stats','Select a shooter first.'); return
+        shooter=self.shooter_rows[idx.row()]; sid=shooter['id']
+        found=self.db.query('SELECT * FROM season_stats WHERE shooter_id=? AND season=?',(sid,self.season))
+        row=found[0] if found else {}
+        d=QDialog(self); d.setWindowTitle(f"{shooter['display_name']} — {self.season} statistics"); f=QFormLayout(d); fields={}
+        for disc in ('singles','handicap','doubles'):
+            box=QSpinBox(); box.setRange(0,200000); box.setValue(int(row.get(f'{disc}_targets') or 0)); fields[f'{disc}_targets']=box; f.addRow(f'{disc.title()} targets',box)
+            hits=QSpinBox(); hits.setRange(0,200000); hits.setValue(int(row.get(f'{disc}_hits') or 0)); fields[f'{disc}_hits']=hits; f.addRow(f'{disc.title()} hits',hits)
+            mn=QSpinBox(); mn.setRange(0,200000); mn.setValue(int(row.get(f'mn_{disc}_targets') or 0)); fields[f'mn_{disc}_targets']=mn; f.addRow(f'MN {disc} targets',mn)
+        clubs=QSpinBox(); clubs.setRange(0,100); clubs.setValue(int(row.get('mn_clubs') or 0)); fields['mn_clubs']=clubs; f.addRow('Minnesota clubs',clubs)
+        haa=QCheckBox(); haa.setChecked(bool(row.get('haa_complete'))); fields['haa_complete']=haa; f.addRow('HAA completed',haa)
+        official=QCheckBox(); official.setChecked(bool(row.get('official'))); fields['official']=official; f.addRow('Official totals',official)
+        bb=QDialogButtonBox(QDialogButtonBox.Save|QDialogButtonBox.Cancel); bb.accepted.connect(d.accept); bb.rejected.connect(d.reject); f.addRow(bb)
+        if d.exec():
+            vals={k:(int(v.isChecked()) if isinstance(v,QCheckBox) else v.value()) for k,v in fields.items()}
+            for disc in ('singles','handicap','doubles'):
+                if vals[f'{disc}_hits']>vals[f'{disc}_targets']:
+                    QMessageBox.warning(self,'Invalid statistics',f'{disc.title()} hits cannot exceed targets.'); return
+            vals['source']='Manual entry'; self.db.upsert_stats(sid,self.season,**vals); self.refresh_all()
     def import_official(self):
         p,_=QFileDialog.getOpenFileName(self,'Official ShootATA export','','Data files (*.csv *.xlsx *.xlsm *.html *.htm *.pdf)')
         if p:

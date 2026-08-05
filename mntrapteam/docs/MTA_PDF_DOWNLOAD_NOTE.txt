@@ -1,2 +1,0 @@
-Download failed during build: <urlopen error [Errno -3] Temporary failure in name resolution>
-Source URL is listed in config/mta_rules.json

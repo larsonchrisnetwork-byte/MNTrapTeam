@@ -6,6 +6,7 @@ import pandas as pd
 try: import pdfplumber
 except Exception: pdfplumber=None
 from .matcher import ShooterMatcher
+from .season import season_bounds
 
 ALIASES={'ata #':'ata_number','ata number':'ata_number','ata':'ata_number','name':'name','shooter':'name','shooter name':'name','category':'category','state':'state','singles targets':'singles_targets','singles hits':'singles_hits','singles score':'singles_score','singles average':'singles_average','handicap targets':'handicap_targets','handicap hits':'handicap_hits','handicap score':'handicap_score','handicap average':'handicap_average','doubles targets':'doubles_targets','doubles hits':'doubles_hits','doubles score':'doubles_score','doubles average':'doubles_average','mn singles':'mn_singles_targets','mn handicap':'mn_handicap_targets','mn doubles':'mn_doubles_targets','mn clubs':'mn_clubs','haa':'haa_complete','discipline':'discipline','targets':'targets','hits':'hits','score':'score'}
 def norm(v):return re.sub(r'[^a-z0-9]+',' ',str(v).strip().lower()).strip()
@@ -83,9 +84,21 @@ class ScoreboardImporter:
         self.db.execute('INSERT INTO imports(filename,kind,sha256,rows_read,rows_imported,warnings) VALUES(?,?,?,?,?,?)',(path.name,'scoreboard',digest,len(df),imported,'\n'.join(warnings)))
         self.rebuild_stats(season);return imported,warnings
     def rebuild_stats(self,season):
-        rows=self.db.query("SELECT shooter_id,discipline,SUM(targets) targets,SUM(hits) hits,SUM(CASE WHEN in_state=1 THEN targets ELSE 0 END) mn_targets FROM scores GROUP BY shooter_id,discipline")
-        clubs={r['shooter_id']:r['clubs'] for r in self.db.query("SELECT shooter_id,COUNT(DISTINCT club_key) clubs FROM scores WHERE in_state=1 GROUP BY shooter_id")}
+        start_date, end_date = season_bounds(int(season))
+        rows=self.db.query("""SELECT shooter_id,discipline,SUM(targets) targets,SUM(hits) hits,
+            SUM(CASE WHEN in_state=1 THEN targets ELSE 0 END) mn_targets
+            FROM scores WHERE event_date BETWEEN ? AND ? GROUP BY shooter_id,discipline""",(start_date,end_date))
+        clubs={r['shooter_id']:r['clubs'] for r in self.db.query(
+            "SELECT shooter_id,COUNT(DISTINCT club_key) clubs FROM scores WHERE in_state=1 AND event_date BETWEEN ? AND ? GROUP BY shooter_id",
+            (start_date,end_date))}
         grouped={}
         for r in rows:
-            g=grouped.setdefault(r['shooter_id'],{'source':'Score imports','official':0});d=r['discipline'];g[f'{d}_targets']=r['targets'];g[f'{d}_hits']=r['hits'];g[f'mn_{d}_targets']=r['mn_targets'];g['mn_clubs']=clubs.get(r['shooter_id'],0)
-        for sid,v in grouped.items():self.db.upsert_stats(sid,season,**v)
+            g=grouped.setdefault(r['shooter_id'],{'source':'Score imports','official':0});d=r['discipline']
+            g[f'{d}_targets']=r['targets'];g[f'{d}_hits']=r['hits'];g[f'mn_{d}_targets']=r['mn_targets'];g['mn_clubs']=clubs.get(r['shooter_id'],0)
+        for sid,v in grouped.items():
+            existing=self.db.query('SELECT official FROM season_stats WHERE shooter_id=? AND season=?',(sid,season))
+            if existing and existing[0].get('official'):
+                # Keep official ATA totals; only supplement MN-specific eligibility fields from score imports.
+                v={k:val for k,val in v.items() if k.startswith('mn_')}
+                v['source']='Official totals + score-import MN counts'; v['official']=1
+            self.db.upsert_stats(sid,season,**v)

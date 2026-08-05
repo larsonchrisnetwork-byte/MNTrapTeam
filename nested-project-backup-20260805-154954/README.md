@@ -32,13 +32,3 @@ git add .
 git commit -m "Complete MNTrapTeam 1.1"
 git push
 ```
-
-
-## Version 1.3 improvements
-
-- MTA target-year filtering uses September 1 through August 31.
-- ShootScoreBoard score rebuilds cannot overwrite official ShootATA totals.
-- Manual season-stat editor for corrections and initial entry.
-- Import-history table with warnings and row counts.
-- Python 3.14-compatible installer workflow.
-- Ten automated tests, including season-boundary and official-data preservation tests.
