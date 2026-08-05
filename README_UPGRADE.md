@@ -1,10 +1,14 @@
-# MNTrapTeam 1.6.0
+# MNTrapTeam 1.7.0
 
-Adds a three-discipline projection planner that calculates projected HOA,
-projected team rank, team-selection status, cut-line gap, and the approximate
-average needed on planned future targets.
+Adds a safer data-ingestion pipeline:
+
+- Official ShootATA imports are hashed and written to import history.
+- Identical official files are blocked from being imported twice.
+- A folder importer discovers CSV, Excel, HTML, and PDF files.
+- Files are classified as official totals, ShootScoreBoard reports, or unknown.
+- Each file reports rows read/imported, warnings, duplicate status, and errors.
 
 Apply:
 
-    & ".\.venv\Scripts\python.exe" .\Apply_v1.6.0.py
+    & ".\.venv\Scripts\python.exe" .\Apply_v1.7.0.py
     & ".\.venv\Scripts\python.exe" -m pytest -q tests

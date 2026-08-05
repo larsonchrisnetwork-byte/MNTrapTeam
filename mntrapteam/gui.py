@@ -6,7 +6,8 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import *
 from .paths import CONFIG
 from .services import TeamService,ExportService,open_shootata_login
-from .importers import OfficialStatsImporter,ScoreboardImporter
+from .importers import ScoreboardImporter
+from .ingestion import TrackedOfficialStatsImporter,BatchImportService
 from .planner import projected_team_rank, required_uniform_average_for_cut
 from .sample_data import load as load_sample
 
@@ -44,7 +45,7 @@ class MainWindow(QMainWindow):
         w=QWidget(); v=QVBoxLayout(w); form=QHBoxLayout(); self.q=QLineEdit(); self.q.setPlaceholderText('Search name or ATA number'); self.q.textChanged.connect(self.refresh_shooters); form.addWidget(self.q); add=QPushButton('Add / edit shooter'); add.clicked.connect(self.edit_shooter); form.addWidget(add); stats=QPushButton('Edit season stats'); stats.clicked.connect(self.edit_stats); form.addWidget(stats); v.addLayout(form); self.shooter_table=QTableView(); self.shooter_table.doubleClicked.connect(self.edit_shooter); v.addWidget(self.shooter_table); self.tabs.addTab(w,'Shooters'); return w
     def make_imports(self):
         w=QWidget(); v=QVBoxLayout(w); info=QLabel('Import official ShootATA exports or ShootScoreBoard CSV/XLSX/HTML/PDF reports. ShootScoreBoard data is treated as unofficial.'); info.setWordWrap(True); v.addWidget(info)
-        row=QHBoxLayout(); b1=QPushButton('Import official ShootATA file'); b1.clicked.connect(self.import_official); row.addWidget(b1); b2=QPushButton('Import ShootScoreBoard report'); b2.clicked.connect(self.import_scoreboard); row.addWidget(b2); b3=QPushButton('Open ShootATA login'); b3.clicked.connect(open_shootata_login); row.addWidget(b3); row.addStretch(); v.addLayout(row)
+        row=QHBoxLayout(); b1=QPushButton('Import official ShootATA file'); b1.clicked.connect(self.import_official); row.addWidget(b1); b2=QPushButton('Import ShootScoreBoard report'); b2.clicked.connect(self.import_scoreboard); row.addWidget(b2); batch=QPushButton('Import folder'); batch.clicked.connect(self.import_folder); row.addWidget(batch); b3=QPushButton('Open ShootATA login'); b3.clicked.connect(open_shootata_login); row.addWidget(b3); row.addStretch(); v.addLayout(row)
         self.import_log=QTextEdit(); self.import_log.setReadOnly(True); v.addWidget(self.import_log); self.import_table=QTableView(); v.addWidget(QLabel('Import history')); v.addWidget(self.import_table); self.tabs.addTab(w,'Imports'); return w
     def make_standings(self):
         w=QWidget(); v=QVBoxLayout(w); row=QHBoxLayout(); self.team_box=QComboBox(); self.team_box.addItems(self.rules.rules['teams']); self.team_box.currentTextChanged.connect(self.refresh_standings); row.addWidget(QLabel('Team')); row.addWidget(self.team_box); row.addStretch();
@@ -127,7 +128,7 @@ class MainWindow(QMainWindow):
     def import_official(self):
         p,_=QFileDialog.getOpenFileName(self,'Official ShootATA export','','Data files (*.csv *.xlsx *.xlsm *.html *.htm *.pdf)')
         if p:
-            try: n,w=OfficialStatsImporter(self.db).import_file(p,self.season); self.import_log.append(f'Official import: {n} shooters from {p}\n'+'\n'.join(w)); self.refresh_all()
+            try: n,w=TrackedOfficialStatsImporter(self.db).import_file(p,self.season); self.import_log.append(f'Official import: {n} shooters from {p}\n'+'\n'.join(w)); self.refresh_all()
             except Exception as e: QMessageBox.critical(self,'Import failed',str(e))
     def import_scoreboard(self):
         p,_=QFileDialog.getOpenFileName(self,'ShootScoreBoard report','','Reports (*.csv *.xlsx *.xlsm *.html *.htm *.pdf)')
@@ -138,6 +139,20 @@ class MainWindow(QMainWindow):
         except Exception as e: QMessageBox.critical(self,'Import failed',str(e))
     def _projection_additions(self):
         return {disc:(boxes[0].value(),boxes[1].value()) for disc,boxes in self.proj_inputs.items()}
+    def import_folder(self):
+        folder=QFileDialog.getExistingDirectory(self,'Folder containing import files')
+        if not folder:return
+        club,ok=QInputDialog.getText(self,'Club','Default Minnesota club/location for score reports')
+        if not ok:return
+        results=BatchImportService(self.db,self.threshold.value()).import_folder(folder,self.season,club=club,in_state=True)
+        lines=[]
+        for result in results:
+            status='ERROR' if result.error else ('DUPLICATE' if result.skipped_duplicate else 'IMPORTED')
+            lines.append(f"{status}: {result.path.name} [{result.kind}] {result.rows_imported}/{result.rows_read}")
+            if result.error: lines.append(f"  {result.error}")
+            lines.extend(f"  {warning}" for warning in result.warnings)
+        self.import_log.append('Folder import:\n'+'\n'.join(lines))
+        self.refresh_all()
     def calc_projection(self):
         r=self.proj_shooter.currentData()
         if not r:return
