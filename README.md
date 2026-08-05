@@ -1,42 +1,34 @@
-# MNTrapTeam
+# MNTrapTeam 1.1
 
-A Windows desktop application for tracking Minnesota ATA shooters, importing ShootScoreBoard high-gun reports, reconciling official ShootATA data, checking Minnesota Trapshooting Association State Team eligibility, projecting averages, calculating teams, and preserving historical seasons.
+Windows desktop and command-line application for tracking Minnesota ATA shooters, importing ShootScoreBoard reports, reconciling authorized ShootATA exports, checking MTA State Team eligibility, calculating teams, projecting averages, exporting reports, and archiving seasons.
 
-## Highlights
+## Verified MTA rules
+The included `docs/MTA-State-Team-Requirements-10_24.pdf` is the source for the rules file. Men: 1,500 singles, 1,200 handicap, 1,000 doubles. General in-state minimums: 700 singles, 700 handicap, 400 doubles; HAA and four-club rules apply with the stated junior exemptions.
 
-- Modern PySide6 desktop GUI with dashboard, shooters, imports, standings, projections, archives, and settings.
-- SQLite database with automatic schema creation and migrations.
-- CSV, XLSX, HTML, and PDF import support for ShootScoreBoard-style reports.
-- Official-data reconciliation workflow for ShootATA exports and browser-assisted downloads.
-- MTA rules engine based on the October 2024 State Team Requirements sheet.
-- Minnesota target, club, HAA, category, and total-target eligibility checks.
-- HOA rankings and automatic Men, Lady, Vet, Sr Vet, Junior, and Sub-Junior teams.
-- Scenario projections and historical season snapshots.
-- CSV/XLSX/PDF reports and database backup/restore.
-- Unit tests and sample data.
-
-## Windows quick start
-
-1. Install Python 3.11 or newer from python.org and select **Add Python to PATH**.
-2. Double-click `Install_MNTrapTeam.bat` once.
+## Install and run
+1. Install Python 3.11+ and select **Add Python to PATH**.
+2. Double-click `Install_MNTrapTeam.bat`.
 3. Double-click `Run_MNTrapTeam.bat`.
 
-The first launch creates `data/mntrapteam.db` and loads sample data only when requested from the GUI.
+## Data safety
+The program does not store a ShootATA password or bypass login/CAPTCHA. Use the browser login and import an export you are authorized to access. ShootScoreBoard imports remain marked unofficial until reconciled. Never commit `data/`, exports, credentials, cookies, or browser profiles.
 
-## ShootATA security
-
-MNTrapTeam does not store your ShootATA password in the database. The recommended workflow is to log in with your normal browser, export or save the official shooter information, and import it. An optional browser-assisted connector opens the official login page but does not bypass authentication or CAPTCHA.
-
-## GitHub
-
-This folder is initialized as a local Git repository. To publish it:
-
+## Command line
+After installation:
 ```powershell
-gh repo create MNTrapTeam --private --source . --remote origin --push
+python -m mntrapteam.cli rank --season 2026 --team MEN
+python -m mntrapteam.cli import-official samples\official_shootata_import.csv --season 2026
+python -m mntrapteam.cli export --season 2026 --format xlsx
 ```
 
-or create an empty repository on GitHub and follow the displayed `git remote add` / `git push` commands.
+## Tests
+```powershell
+python -m pytest -q
+```
 
-## Disclaimer
-
-ShootScoreBoard states that its scores are not official. Use ShootATA or MTA records for official decisions. Always confirm final State Team selections with the MTA.
+## Publish changes
+```powershell
+git add .
+git commit -m "Complete MNTrapTeam 1.1"
+git push
+```

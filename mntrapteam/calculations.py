@@ -1,14 +1,42 @@
-def avg(hits, targets): return hits/targets*100 if targets else 0.0
-def hoa(row): return (avg(row.get('singles_hits',0),row.get('singles_targets',0))+avg(row.get('handicap_hits',0),row.get('handicap_targets',0))+avg(row.get('doubles_hits',0),row.get('doubles_targets',0)))/3
-def project(hits,targets,new_targets,new_average):
-    new_hits=round(new_targets*new_average/100)
-    return {'hits':hits+new_hits,'targets':targets+new_targets,'average':avg(hits+new_hits,targets+new_targets)}
-def team_rankings(rows, rules_engine, team):
+from __future__ import annotations
+from dataclasses import dataclass
+
+DISCIPLINES=('singles','handicap','doubles')
+
+def average(hits:int|float, targets:int|float)->float:
+    return (float(hits)/float(targets)*100.0) if targets else 0.0
+
+def hoa(row:dict)->float:
+    """MTA team HOA: arithmetic mean of singles, handicap and doubles averages."""
+    return sum(average(row.get(f'{d}_hits',0),row.get(f'{d}_targets',0)) for d in DISCIPLINES)/3.0
+
+def project(hits:int, targets:int, new_targets:int, new_average:float)->dict:
+    if new_targets<0 or not 0<=new_average<=100: raise ValueError('Invalid projection values')
+    new_hits=round(new_targets*new_average/100.0)
+    return {'hits':hits+new_hits,'targets':targets+new_targets,'average':average(hits+new_hits,targets+new_targets),'added_hits':new_hits}
+
+def targets_needed_for_average(hits:int,targets:int,goal:float,future_average:float,max_targets:int=100000)->int|None:
+    if not 0<=goal<=100 or not 0<=future_average<=100: raise ValueError('Averages must be 0-100')
+    if average(hits,targets)>=goal:return 0
+    if future_average<=goal:return None
+    # ceil((goal*T - H)/(future-goal)), expressed as proportions
+    import math
+    n=math.ceil((goal*targets-100*hits)/(future_average-goal))
+    n=max(0,n)
+    return n if n<=max_targets else None
+
+def team_rankings(rows:list[dict],rules_engine,team:str)->list[dict]:
     out=[]
-    for r in rows:
-        if rules_engine.team_for_category(r.get('category_declared') or r.get('category'))!=team: continue
-        e=rules_engine.check(r,team); x=dict(r); x['hoa']=hoa(r); x['eligible']=e.eligible; x['eligibility_reasons']='; '.join(e.reasons); out.append(x)
-    out.sort(key=lambda x:(x['eligible'],x['hoa']),reverse=True)
-    size=rules_engine.rules['teams'][team]['size']
-    for i,x in enumerate(out,1): x['rank']=i; x['selected']=x['eligible'] and sum(1 for y in out[:i] if y['eligible'])<=size
+    for row in rows:
+        if rules_engine.team_for_category(row.get('category_declared') or row.get('category'))!=team: continue
+        result=rules_engine.check(row,team)
+        x=dict(row); x['hoa']=hoa(row); x['eligible']=result.eligible; x['eligibility_reasons']='; '.join(result.reasons)
+        out.append(x)
+    out.sort(key=lambda x:(not x['eligible'], -x['hoa'], x.get('display_name','').lower()))
+    size=int(rules_engine.rules['teams'][team]['size']); eligible_position=0
+    for rank,x in enumerate(out,1):
+        x['rank']=rank
+        if x['eligible']: eligible_position+=1
+        x['eligible_rank']=eligible_position if x['eligible'] else None
+        x['selected']=bool(x['eligible'] and eligible_position<=size)
     return out

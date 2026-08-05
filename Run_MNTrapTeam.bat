@@ -1,9 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-if exist ".venv\Scripts\python.exe" (
-  ".venv\Scripts\python.exe" main.py
-) else (
-  py -3 main.py
+if not exist ".venv\Scripts\python.exe" (
+  echo MNTrapTeam is not installed yet. Run Install_MNTrapTeam.bat first.
+  pause
+  exit /b 1
 )
+".venv\Scripts\python.exe" main.py
 if errorlevel 1 pause
