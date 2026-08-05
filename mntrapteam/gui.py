@@ -7,7 +7,7 @@ from PySide6.QtWidgets import *
 from .paths import CONFIG
 from .services import TeamService,ExportService,open_shootata_login
 from .importers import OfficialStatsImporter,ScoreboardImporter
-from .calculations import project
+from .planner import projected_team_rank, required_uniform_average_for_cut
 from .sample_data import load as load_sample
 
 DARK='''QWidget{background:#19212b;color:#e8edf2;font-size:10pt} QLineEdit,QComboBox,QSpinBox,QDoubleSpinBox,QTableView,QTextEdit{background:#111820;border:1px solid #3b4a5b;padding:5px} QPushButton{background:#2574a9;border:0;padding:7px 12px;border-radius:3px} QPushButton:hover{background:#328bc3} QHeaderView::section{background:#273545;padding:6px;border:0} QTabBar::tab{padding:9px 15px;background:#273545} QTabBar::tab:selected{background:#2574a9}'''
@@ -51,7 +51,27 @@ class MainWindow(QMainWindow):
         for txt,fn in [('CSV',self.export_csv),('Excel all teams',self.export_all),('PDF',self.export_pdf)]: b=QPushButton('Export '+txt); b.clicked.connect(fn); row.addWidget(b)
         v.addLayout(row); self.stand_table=QTableView(); v.addWidget(self.stand_table); self.tabs.addTab(w,'State Teams'); return w
     def make_projections(self):
-        w=QWidget(); f=QFormLayout(w); self.proj_shooter=QComboBox(); f.addRow('Shooter',self.proj_shooter); self.proj_disc=QComboBox(); self.proj_disc.addItems(['singles','handicap','doubles']); f.addRow('Discipline',self.proj_disc); self.proj_targets=QSpinBox(); self.proj_targets.setRange(0,10000); self.proj_targets.setValue(1000); f.addRow('Additional targets',self.proj_targets); self.proj_avg=QDoubleSpinBox(); self.proj_avg.setRange(0,100); self.proj_avg.setDecimals(2); self.proj_avg.setValue(95); f.addRow('Expected average',self.proj_avg); b=QPushButton('Calculate projection'); b.clicked.connect(self.calc_projection); f.addRow(b); self.proj_result=QLabel(); self.proj_result.setWordWrap(True); f.addRow(self.proj_result); self.tabs.addTab(w,'Projections'); return w
+        w=QWidget(); f=QFormLayout(w)
+        self.proj_shooter=QComboBox(); f.addRow('Shooter',self.proj_shooter)
+        self.proj_team=QComboBox(); self.proj_team.addItems(self.rules.rules['teams']); f.addRow('Team',self.proj_team)
+        self.proj_inputs={}
+        for disc in ('singles','handicap','doubles'):
+            row=QHBoxLayout()
+            targets=QSpinBox(); targets.setRange(0,10000); targets.setSingleStep(100)
+            avg=QDoubleSpinBox(); avg.setRange(0,100); avg.setDecimals(2); avg.setValue(95)
+            row.addWidget(QLabel('Targets')); row.addWidget(targets)
+            row.addWidget(QLabel('Expected average')); row.addWidget(avg)
+            self.proj_inputs[disc]=(targets,avg)
+            f.addRow(disc.title(),row)
+        buttons=QHBoxLayout()
+        b=QPushButton('Calculate projected rank'); b.clicked.connect(self.calc_projection); buttons.addWidget(b)
+        needed=QPushButton('Average needed to make team'); needed.clicked.connect(self.calc_needed_for_cut); buttons.addWidget(needed)
+        f.addRow(buttons)
+        self.proj_result=QLabel(); self.proj_result.setWordWrap(True)
+        self.proj_result.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        f.addRow(self.proj_result)
+        self.tabs.addTab(w,'Projections'); return w
+
     def make_archive(self):
         w=QWidget(); v=QVBoxLayout(w); row=QHBoxLayout(); self.snap_label=QLineEdit(); self.snap_label.setPlaceholderText('Snapshot label'); row.addWidget(self.snap_label); b=QPushButton('Create season snapshot'); b.clicked.connect(self.snapshot); row.addWidget(b); v.addLayout(row); self.snap_table=QTableView(); v.addWidget(self.snap_table); self.tabs.addTab(w,'Archives'); return w
     def make_settings(self):
@@ -116,11 +136,44 @@ class MainWindow(QMainWindow):
         if not ok:return
         try: n,w=ScoreboardImporter(self.db,self.threshold.value()).import_file(p,self.season,club=club,in_state=True); self.import_log.append(f'Scoreboard import: {n} event scores from {p}\n'+'\n'.join(w)); self.refresh_all()
         except Exception as e: QMessageBox.critical(self,'Import failed',str(e))
+    def _projection_additions(self):
+        return {disc:(boxes[0].value(),boxes[1].value()) for disc,boxes in self.proj_inputs.items()}
     def calc_projection(self):
-        r=self.proj_shooter.currentData();
+        r=self.proj_shooter.currentData()
         if not r:return
-        d=self.proj_disc.currentText(); p=project(r[f'{d}_hits'],r[f'{d}_targets'],self.proj_targets.value(),self.proj_avg.value()); avgs={x:(r[f'{x}_hits']/r[f'{x}_targets']*100 if r[f'{x}_targets'] else 0) for x in ('singles','handicap','doubles')}; avgs[d]=p['average']; newhoa=sum(avgs.values())/3
-        self.proj_result.setText(f"Projected {d.title()}: {p['average']:.2f}% on {p['targets']:,} targets. Projected HOA: {newhoa:.2f}%.")
+        team=self.proj_team.currentText()
+        try:
+            result=projected_team_rank(self.ts.season_rows(self.season),r['id'],self._projection_additions(),self.rules,team)
+        except ValueError as exc:
+            QMessageBox.warning(self,'Projection',str(exc)); return
+        shooter=result['shooter']; cut=result.get('cut_line_hoa'); gap=result.get('hoa_gap_to_cut')
+        details=shooter['projection_details']
+        lines=[f"<b>{shooter['display_name']}</b> projected HOA: <b>{shooter['hoa']:.2f}%</b>",
+               f"Projected overall rank: <b>{result['rank']}</b>",
+               f"Projected eligible rank: <b>{result.get('eligible_rank') or 'Not eligible'}</b>",
+               f"Projected team status: <b>{'Selected' if result['selected'] else 'Outside team'}</b>"]
+        if cut is not None: lines.append(f"Cut line: <b>{cut:.2f}%</b>; gap: <b>{gap:+.2f}</b>")
+        for disc in ('singles','handicap','doubles'):
+            d=details[disc]
+            lines.append(f"{disc.title()}: {d['average']:.2f}% on {d['targets']:,} targets")
+        self.proj_result.setText('<br>'.join(lines))
+    def calc_needed_for_cut(self):
+        r=self.proj_shooter.currentData()
+        if not r:return
+        future={disc:boxes[0].value() for disc,boxes in self.proj_inputs.items()}
+        if not any(future.values()):
+            QMessageBox.information(self,'Projection','Enter future targets in at least one discipline.'); return
+        try:
+            needed=required_uniform_average_for_cut(self.ts.season_rows(self.season),r['id'],future,self.rules,self.proj_team.currentText())
+        except ValueError as exc:
+            QMessageBox.warning(self,'Projection',str(exc)); return
+        if needed is None:
+            self.proj_result.setText('<b>Even 100% on the entered future targets would not place this shooter on the selected team.</b>')
+        elif needed==0:
+            self.proj_result.setText('<b>This shooter is already projected on the selected team.</b>')
+        else:
+            self.proj_result.setText(f"Approximate average needed across the entered future targets to make the team: <b>{needed:.2f}%</b>")
+
     def snapshot(self): self.ts.snapshot(self.season,self.snap_label.text() or 'Snapshot'); self.refresh_snapshots()
     def backup(self): QMessageBox.information(self,'Backup',f'Created {self.db.backup()}')
     def export_csv(self): QMessageBox.information(self,'Export',f'Created {self.ex.csv_team(self.season,self.team_box.currentText())}')

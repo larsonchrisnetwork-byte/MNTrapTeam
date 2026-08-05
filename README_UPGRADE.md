@@ -1,13 +1,10 @@
-# MNTrapTeam 1.5.0 upgrade
+# MNTrapTeam 1.6.0
 
-Adds:
-- State-team cut-line HOA
-- HOA gap to the cut
-- Approximate birds-per-300 gap
-- Fixed-target required-average calculator
-- Multi-discipline season projections
-- Team summary worksheet in Excel exports
-- GitHub Actions tests on Python 3.12, 3.13, and 3.14
+Adds a three-discipline projection planner that calculates projected HOA,
+projected team rank, team-selection status, cut-line gap, and the approximate
+average needed on planned future targets.
 
-Copy this package over the repository root, run `Apply_v1.5.0.ps1`,
-then run the test suite.
+Apply:
+
+    & ".\.venv\Scripts\python.exe" .\Apply_v1.6.0.py
+    & ".\.venv\Scripts\python.exe" -m pytest -q tests
