@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mntrapteam"
+version = "1.2.0"
+description = "Minnesota ATA State Team tracking desktop application"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "PySide6>=6.7",
+  "pandas>=2.2",
+  "openpyxl>=3.1",
+  "beautifulsoup4>=4.12",
+  "rapidfuzz>=3.9",
+  "pdfplumber>=0.11",
+  "reportlab>=4.2"
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+mntrapteam = "mntrapteam.cli:main"
+
+[tool.setuptools]
+packages = ["mntrapteam"]
+include-package-data = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
