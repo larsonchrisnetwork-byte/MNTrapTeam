@@ -32,6 +32,6 @@ def test_gui_refreshes_both_dashboards():
     assert "self.refresh_race()" in refresh_line
 
 
-def test_version_is_2_0_0():
-    assert Path("VERSION").read_text(encoding="utf-8").strip() == "2.0.0"
-    assert "MNTrapTeam 2.0.0" in gui_source()
+def test_version_matches_current_release():
+    assert Path("VERSION").read_text(encoding="utf-8").strip() == "2.1.0"
+    assert "MNTrapTeam 2.1.0" in gui_source()

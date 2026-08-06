@@ -12,6 +12,7 @@ from .planner import projected_team_rank, required_uniform_average_for_cut
 from .analytics import personal_progress
 from .sample_data import load as load_sample
 from .race import team_race
+from .event_intelligence import event_intelligence
 
 DARK='''QWidget{background:#19212b;color:#e8edf2;font-size:10pt} QLineEdit,QComboBox,QSpinBox,QDoubleSpinBox,QTableView,QTextEdit{background:#111820;border:1px solid #3b4a5b;padding:5px} QPushButton{background:#2574a9;border:0;padding:7px 12px;border-radius:3px} QPushButton:hover{background:#328bc3} QHeaderView::section{background:#273545;padding:6px;border:0} QTabBar::tab{padding:9px 15px;background:#273545} QTabBar::tab:selected{background:#2574a9}'''
 
@@ -31,9 +32,9 @@ class DictModel(QAbstractTableModel):
 class MainWindow(QMainWindow):
     def __init__(self,db,rules,settings):
         super().__init__(); self.db=db; self.rules=rules; self.settings=settings; self.season=int(settings.get('season',2026)); self.ts=TeamService(db,rules); self.ex=ExportService(self.ts)
-        self.setWindowTitle('MNTrapTeam 2.0.0'); self.resize(1320,820); self.setStyleSheet(DARK)
+        self.setWindowTitle('MNTrapTeam 2.1.0'); self.resize(1320,820); self.setStyleSheet(DARK)
         self.tabs=QTabWidget(); self.setCentralWidget(self.tabs)
-        self.dashboard=self.make_dashboard(); self.progress=self.make_progress(); self.race=self.make_race(); self.shooters=self.make_shooters(); self.imports=self.make_imports(); self.standings=self.make_standings(); self.projections=self.make_projections(); self.archive=self.make_archive(); self.settings_tab=self.make_settings()
+        self.dashboard=self.make_dashboard(); self.progress=self.make_progress(); self.race=self.make_race(); self.shooters=self.make_shooters(); self.imports=self.make_imports(); self.standings=self.make_standings(); self.projections=self.make_projections(); self.archive=self.make_archive(); self.event_intelligence=self.make_event_intelligence(); self.settings_tab=self.make_settings()
         self.make_menu(); self.refresh_all()
     def make_menu(self):
         f=self.menuBar().addMenu('&File');
@@ -121,6 +122,43 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(w,'Team Race')
         return w
 
+
+    def make_event_intelligence(self):
+        w=QWidget(); v=QVBoxLayout(w)
+        controls=QHBoxLayout()
+        self.event_shooter=QComboBox()
+        self.event_shooter.currentIndexChanged.connect(self.refresh_event_intelligence)
+        controls.addWidget(QLabel('Shooter')); controls.addWidget(self.event_shooter)
+        self.event_window=QSpinBox()
+        self.event_window.setRange(100,5000)
+        self.event_window.setSingleStep(100)
+        self.event_window.setValue(500)
+        self.event_window.valueChanged.connect(self.refresh_event_intelligence)
+        controls.addWidget(QLabel('Recent-form targets')); controls.addWidget(self.event_window)
+        refresh=QPushButton('Refresh')
+        refresh.clicked.connect(self.refresh_event_intelligence)
+        controls.addWidget(refresh); controls.addStretch(); v.addLayout(controls)
+
+        self.event_cards=QLabel()
+        self.event_cards.setTextFormat(Qt.RichText)
+        self.event_cards.setWordWrap(True)
+        v.addWidget(self.event_cards)
+
+        self.event_subtabs=QTabWidget()
+        self.event_recent=QTableView()
+        self.event_bests=QTableView()
+        self.event_clubs=QTableView()
+        self.event_months=QTableView()
+        self.event_history_table=QTableView()
+        self.event_subtabs.addTab(self.event_recent,'Recent Form')
+        self.event_subtabs.addTab(self.event_bests,'Personal Bests')
+        self.event_subtabs.addTab(self.event_clubs,'By Club')
+        self.event_subtabs.addTab(self.event_months,'By Month')
+        self.event_subtabs.addTab(self.event_history_table,'Event History')
+        v.addWidget(self.event_subtabs)
+        self.tabs.addTab(w,'Event Intelligence')
+        return w
+
     def make_shooters(self):
         w=QWidget(); v=QVBoxLayout(w); form=QHBoxLayout(); self.q=QLineEdit(); self.q.setPlaceholderText('Search name or ATA number'); self.q.textChanged.connect(self.refresh_shooters); form.addWidget(self.q); add=QPushButton('Add / edit shooter'); add.clicked.connect(self.edit_shooter); form.addWidget(add); stats=QPushButton('Edit season stats'); stats.clicked.connect(self.edit_stats); form.addWidget(stats); v.addLayout(form); self.shooter_table=QTableView(); self.shooter_table.doubleClicked.connect(self.edit_shooter); v.addWidget(self.shooter_table); self.tabs.addTab(w,'Shooters'); return w
     def make_imports(self):
@@ -158,7 +196,7 @@ class MainWindow(QMainWindow):
     def make_settings(self):
         w=QWidget(); f=QFormLayout(w); self.user_ata=QLineEdit(self.settings.get('user_ata_number','')); f.addRow('Your ATA number',self.user_ata); self.threshold=QSpinBox(); self.threshold.setRange(50,100); self.threshold.setValue(int(self.settings.get('fuzzy_match_threshold',88))); f.addRow('Name-match threshold',self.threshold); b=QPushButton('Save settings'); b.clicked.connect(self.save_settings); f.addRow(b); self.tabs.addTab(w,'Settings'); return w
     def change_season(self,y): self.season=y; self.refresh_all()
-    def refresh_all(self): self.refresh_dashboard(); self.refresh_progress(); self.refresh_race(); self.refresh_shooters(); self.refresh_standings(); self.refresh_projection_shooters(); self.refresh_snapshots(); self.refresh_imports()
+    def refresh_all(self): self.refresh_dashboard(); self.refresh_progress(); self.refresh_race(); self.refresh_shooters(); self.refresh_standings(); self.refresh_projection_shooters(); self.refresh_snapshots(); self.refresh_imports(); self.refresh_event_shooters(); self.refresh_event_intelligence()
     def refresh_imports(self):
         if hasattr(self,'import_table'):
             rows=self.db.query('SELECT filename,kind,rows_read,rows_imported,imported_at,warnings FROM imports ORDER BY id DESC LIMIT 100')
@@ -347,6 +385,93 @@ class MainWindow(QMainWindow):
                     ('mn_clubs','MN Clubs'),
                     ('eligibility_reasons','Missing Requirements'),
                 ],
+            )
+        )
+
+
+    def refresh_event_shooters(self):
+        if not hasattr(self,'event_shooter'):
+            return
+        current=self.event_shooter.currentData()
+        current_id=current.get('id') if isinstance(current,dict) else None
+        self.event_shooter.blockSignals(True)
+        self.event_shooter.clear()
+        rows=self.db.query(
+            'SELECT id,ata_number,display_name FROM shooters '
+            'WHERE active=1 ORDER BY last_name,first_name,display_name'
+        )
+        selected_index=0
+        for index,row in enumerate(rows):
+            self.event_shooter.addItem(row['display_name'],row)
+            if current_id and row['id']==current_id:
+                selected_index=index
+        if rows:
+            self.event_shooter.setCurrentIndex(selected_index)
+        self.event_shooter.blockSignals(False)
+
+    def refresh_event_intelligence(self):
+        if not hasattr(self,'event_shooter'):
+            return
+        shooter=self.event_shooter.currentData()
+        if not shooter:
+            self.event_cards.setText(
+                '<h2>Event Intelligence</h2><p>No shooter selected.</p>'
+            )
+            return
+        result=event_intelligence(
+            self.db,
+            shooter['id'],
+            self.season,
+            self.event_window.value(),
+        )
+        summary=result['summary']
+        self.event_cards.setText(
+            f"<h2>{shooter['display_name']} — {self.season}</h2>"
+            f"<b>{summary['event_rows']}</b> imported event rows &nbsp;&nbsp; "
+            f"<b>{summary['total_targets']:,}</b> targets &nbsp;&nbsp; "
+            f"<b>{summary['clubs']}</b> clubs &nbsp;&nbsp; "
+            f"<b>{summary['mn_clubs']}</b> MN clubs &nbsp;&nbsp; "
+            f"<b>{summary['total_straights']}</b> perfect event scores"
+        )
+        self.event_recent.setModel(
+            DictModel(
+                result['recent_form'],
+                [('discipline','Discipline'),('hits','Hits'),
+                 ('targets','Targets'),('average','Average'),
+                 ('events','Events Used'),('requested_window','Requested Window')],
+            )
+        )
+        self.event_bests.setModel(
+            DictModel(
+                result['personal_bests'],
+                [('discipline','Discipline'),('hits','Hits'),
+                 ('targets','Targets'),('average','Average'),
+                 ('event_date','Date'),('event_name','Event'),('club','Club')],
+            )
+        )
+        self.event_clubs.setModel(
+            DictModel(
+                result['clubs'],
+                [('club_display','Club'),('discipline','Discipline'),
+                 ('hits','Hits'),('targets','Targets'),('average','Average'),
+                 ('events','Events'),('straights','Perfect Scores')],
+            )
+        )
+        self.event_months.setModel(
+            DictModel(
+                result['months'],
+                [('month','Month'),('discipline','Discipline'),
+                 ('hits','Hits'),('targets','Targets'),('average','Average'),
+                 ('events','Events'),('straights','Perfect Scores')],
+            )
+        )
+        self.event_history_table.setModel(
+            DictModel(
+                result['events'],
+                [('event_date','Date'),('event_name','Event'),
+                 ('club_display','Club'),('discipline','Discipline'),
+                 ('hits','Hits'),('targets','Targets'),('average','Average'),
+                 ('straight','Perfect'),('in_state','MN'),('source','Source')],
             )
         )
 
