@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 import json
 import re
+import time
 
 from .connectors import SessionStore, _load_playwright
 
@@ -312,6 +313,86 @@ def capture_myata(
         page.on("response", on_response)
         page.goto(MYATA_URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(2500)
+
+        def my_scores_available():
+            selectors = (
+                page.get_by_text("My Scores", exact=True),
+                page.get_by_role("button", name=re.compile(r"my scores", re.I)),
+                page.locator('input[value*="My Scores" i]'),
+                page.locator('a:has-text("My Scores")'),
+            )
+            for locator in selectors:
+                try:
+                    if locator.count():
+                        return True
+                except Exception:
+                    pass
+            return False
+
+        if not my_scores_available():
+            if not headed:
+                raise RuntimeError(
+                    "The saved MyATA session is not authenticated. "
+                    "Run again with --headed and complete the login."
+                )
+
+            print()
+            print("MyATA login is required.")
+            print("The browser will stay open until you confirm login is complete.")
+            print("Take as much time as needed for username, password, MFA,")
+            print("password-manager prompts, or other login steps.")
+            print()
+            print("When Shooter Information Center is open and My Scores is visible,")
+            input("return to PowerShell and press Enter to continue... ")
+
+            if context.pages:
+                page = context.pages[-1]
+
+            try:
+                page.wait_for_load_state(
+                    "domcontentloaded",
+                    timeout=30000,
+                )
+            except Exception:
+                pass
+
+            page.wait_for_timeout(2000)
+
+            if not my_scores_available():
+                current_url = page.url
+
+                if "Shooter-Information-Center" not in current_url:
+                    try:
+                        page.goto(
+                            MYATA_URL,
+                            wait_until="domcontentloaded",
+                            timeout=60000,
+                        )
+                        page.wait_for_timeout(2500)
+                    except Exception as exc:
+                        if "interrupted by another navigation" not in str(exc):
+                            raise
+
+                if context.pages:
+                    page = context.pages[-1]
+
+                try:
+                    page.wait_for_load_state(
+                        "domcontentloaded",
+                        timeout=30000,
+                    )
+                except Exception:
+                    pass
+
+                page.wait_for_timeout(2000)
+
+            if not my_scores_available():
+                raise RuntimeError(
+                    "My Scores was not found after login confirmation. "
+                    "Leave the authenticated Shooter Information Center open "
+                    "with My Scores visible before pressing Enter."
+                )
+
         _click_my_scores(page)
         page.wait_for_timeout(3000)
 
