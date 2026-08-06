@@ -1,14 +1,18 @@
-# MNTrapTeam 1.8.0 — My Progress
+# MNTrapTeam 1.9.0 — Team Race
 
-Adds a personal season dashboard driven by the ATA number saved in Settings.
+Adds a live State Team race view.
 
-The dashboard shows current team, HOA, rank, selection status, cut-line gap,
-eligibility reasons, discipline totals from imported event records, Minnesota
-targets and clubs, recent 500-target averages, and recent imported events.
-
-Official ShootATA season totals remain authoritative.
+The Team Race tab shows:
+- filled and open positions,
+- current cut-line HOA,
+- eligible and tracked shooter counts,
+- every selected shooter,
+- shooters inside a configurable HOA bubble,
+- nearby ineligible shooters whose averages are competitive,
+- HOA and approximate bird gap to the cut,
+- missing eligibility requirements.
 
 Apply:
 
-    & ".\.venv\Scripts\python.exe" .\Apply_v1.8.0.py
+    & ".\.venv\Scripts\python.exe" .\Apply_v1.9.0.py
     & ".\.venv\Scripts\python.exe" -m pytest -q tests

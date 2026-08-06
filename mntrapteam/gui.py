@@ -11,6 +11,7 @@ from .ingestion import TrackedOfficialStatsImporter,BatchImportService
 from .planner import projected_team_rank, required_uniform_average_for_cut
 from .analytics import personal_progress
 from .sample_data import load as load_sample
+from .race import team_race
 
 DARK='''QWidget{background:#19212b;color:#e8edf2;font-size:10pt} QLineEdit,QComboBox,QSpinBox,QDoubleSpinBox,QTableView,QTextEdit{background:#111820;border:1px solid #3b4a5b;padding:5px} QPushButton{background:#2574a9;border:0;padding:7px 12px;border-radius:3px} QPushButton:hover{background:#328bc3} QHeaderView::section{background:#273545;padding:6px;border:0} QTabBar::tab{padding:9px 15px;background:#273545} QTabBar::tab:selected{background:#2574a9}'''
 
@@ -30,9 +31,9 @@ class DictModel(QAbstractTableModel):
 class MainWindow(QMainWindow):
     def __init__(self,db,rules,settings):
         super().__init__(); self.db=db; self.rules=rules; self.settings=settings; self.season=int(settings.get('season',2026)); self.ts=TeamService(db,rules); self.ex=ExportService(self.ts)
-        self.setWindowTitle('MNTrapTeam 1.8'); self.resize(1320,820); self.setStyleSheet(DARK)
+        self.setWindowTitle('MNTrapTeam 1.9'); self.resize(1320,820); self.setStyleSheet(DARK)
         self.tabs=QTabWidget(); self.setCentralWidget(self.tabs)
-        self.dashboard=self.make_dashboard(); self.progress=self.make_progress(); self.shooters=self.make_shooters(); self.imports=self.make_imports(); self.standings=self.make_standings(); self.projections=self.make_projections(); self.archive=self.make_archive(); self.settings_tab=self.make_settings()
+        self.dashboard=self.make_dashboard(); self.progress=self.make_progress(); self.race=self.make_race(); self.shooters=self.make_shooters(); self.imports=self.make_imports(); self.standings=self.make_standings(); self.projections=self.make_projections(); self.archive=self.make_archive(); self.settings_tab=self.make_settings()
         self.make_menu(); self.refresh_all()
     def make_menu(self):
         f=self.menuBar().addMenu('&File');
@@ -53,6 +54,20 @@ class MainWindow(QMainWindow):
         self.progress_disciplines=QTableView(); v.addWidget(QLabel('Discipline progress')); v.addWidget(self.progress_disciplines)
         self.progress_events=QTableView(); v.addWidget(QLabel('Recent imported events')); v.addWidget(self.progress_events)
         self.tabs.addTab(w,'My Progress'); return w
+    def make_race(self):
+        w=QWidget(); v=QVBoxLayout(w)
+        controls=QHBoxLayout()
+        self.race_team=QComboBox(); self.race_team.addItems(self.rules.rules['teams'])
+        self.race_team.currentTextChanged.connect(self.refresh_race)
+        controls.addWidget(QLabel('Team')); controls.addWidget(self.race_team)
+        self.race_bubble=QDoubleSpinBox(); self.race_bubble.setRange(0,5); self.race_bubble.setDecimals(2); self.race_bubble.setSingleStep(.05); self.race_bubble.setValue(.75)
+        self.race_bubble.valueChanged.connect(self.refresh_race)
+        controls.addWidget(QLabel('Bubble width')); controls.addWidget(self.race_bubble)
+        refresh=QPushButton('Refresh race'); refresh.clicked.connect(self.refresh_race); controls.addWidget(refresh)
+        controls.addStretch(); v.addLayout(controls)
+        self.race_cards=QLabel(); self.race_cards.setTextFormat(Qt.RichText); self.race_cards.setWordWrap(True); v.addWidget(self.race_cards)
+        self.race_table=QTableView(); v.addWidget(self.race_table)
+        self.tabs.addTab(w,'Team Race'); return w
     def make_shooters(self):
         w=QWidget(); v=QVBoxLayout(w); form=QHBoxLayout(); self.q=QLineEdit(); self.q.setPlaceholderText('Search name or ATA number'); self.q.textChanged.connect(self.refresh_shooters); form.addWidget(self.q); add=QPushButton('Add / edit shooter'); add.clicked.connect(self.edit_shooter); form.addWidget(add); stats=QPushButton('Edit season stats'); stats.clicked.connect(self.edit_stats); form.addWidget(stats); v.addLayout(form); self.shooter_table=QTableView(); self.shooter_table.doubleClicked.connect(self.edit_shooter); v.addWidget(self.shooter_table); self.tabs.addTab(w,'Shooters'); return w
     def make_imports(self):
@@ -90,7 +105,7 @@ class MainWindow(QMainWindow):
     def make_settings(self):
         w=QWidget(); f=QFormLayout(w); self.user_ata=QLineEdit(self.settings.get('user_ata_number','')); f.addRow('Your ATA number',self.user_ata); self.threshold=QSpinBox(); self.threshold.setRange(50,100); self.threshold.setValue(int(self.settings.get('fuzzy_match_threshold',88))); f.addRow('Name-match threshold',self.threshold); b=QPushButton('Save settings'); b.clicked.connect(self.save_settings); f.addRow(b); self.tabs.addTab(w,'Settings'); return w
     def change_season(self,y): self.season=y; self.refresh_all()
-    def refresh_all(self): self.refresh_dashboard(); self.refresh_progress(); self.refresh_shooters(); self.refresh_standings(); self.refresh_projection_shooters(); self.refresh_snapshots(); self.refresh_imports()
+    def refresh_all(self): self.refresh_dashboard(); self.refresh_progress(); self.refresh_race(); self.refresh_shooters(); self.refresh_standings(); self.refresh_projection_shooters(); self.refresh_snapshots(); self.refresh_imports()
     def refresh_imports(self):
         if hasattr(self,'import_table'):
             rows=self.db.query('SELECT filename,kind,rows_read,rows_imported,imported_at,warnings FROM imports ORDER BY id DESC LIMIT 100')
@@ -125,6 +140,30 @@ class MainWindow(QMainWindow):
         self.progress_disciplines.setModel(DictModel(discs,[('discipline','Discipline'),('targets','Imported Targets'),('hits','Hits'),('average','Imported Avg'),('recent_500','Recent 500 Avg'),('mn_targets','MN Targets'),('events','Events'),('mn_clubs','MN Clubs')]))
         events=result.get('events',[])[:50]
         self.progress_events.setModel(DictModel(events,[('event_date','Date'),('event_name','Event'),('discipline','Discipline'),('hits','Hits'),('targets','Targets'),('average','Average'),('location','Location'),('mn','MN'),('source','Source')]))
+    def refresh_race(self):
+        if not hasattr(self,'race_team'): return
+        team=self.race_team.currentText()
+        rankings=self.ts.rankings(self.season,team)
+        size=int(self.rules.rules['teams'][team]['size'])
+        result=team_race(rankings,size,self.race_bubble.value(),5)
+        summary=result['summary']; cut=summary['cut_line_hoa']
+        cut_text='Not established' if cut is None else f"{cut:.2f}%"
+        self.race_cards.setText(
+            f"<h2>{self.season} {team} Team Race</h2>"
+            f"<b>{summary['selected']}/{summary['team_size']}</b> positions filled &nbsp;&nbsp; "
+            f"<b>{summary['eligible']}</b> eligible shooters &nbsp;&nbsp; "
+            f"<b>{summary['tracked']}</b> tracked &nbsp;&nbsp; "
+            f"<b>Cut:</b> {cut_text} &nbsp;&nbsp; "
+            f"<b>Bubble:</b> within {result['bubble_width']:.2f} HOA"
+        )
+        self.race_table.setModel(DictModel(result['rows'],[
+            ('rank','Rank'),('race_status','Race Status'),('selected','Team'),
+            ('eligible','Eligible'),('display_name','Shooter'),('ata_number','ATA #'),
+            ('hoa','HOA'),('cut_line_hoa','Cut HOA'),('hoa_gap_to_cut','Gap'),
+            ('birds_per_300_gap','Birds / 300'),('singles_targets','Singles'),
+            ('handicap_targets','Handicap'),('doubles_targets','Doubles'),
+            ('mn_clubs','MN Clubs'),('eligibility_reasons','Missing Requirements')
+        ]))
     def refresh_dashboard(self):
         rows=self.ts.season_rows(self.season); elig=sum(1 for r in rows if r['eligibility'].eligible); self.cards.setText(f'<h2>{self.season} Minnesota State Team Dashboard</h2><b>{len(rows)}</b> tracked shooters &nbsp;&nbsp; <b>{elig}</b> currently eligible &nbsp;&nbsp; <b>{len(self.db.query("SELECT id FROM imports"))}</b> imported files')
         top=sorted(rows,key=lambda r:r['hoa'],reverse=True)[:20]; self.dash_table.setModel(DictModel(top,[('display_name','Shooter'),('category','Category'),('hoa','HOA'),('cut_line_hoa','Cut HOA'),('hoa_gap_to_cut','Gap to Cut'),('birds_per_300_gap','Birds / 300'),('singles_targets','Singles'),('handicap_targets','Handicap'),('doubles_targets','Doubles')]))
