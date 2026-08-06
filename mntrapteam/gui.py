@@ -33,7 +33,7 @@ class DictModel(QAbstractTableModel):
 class MainWindow(QMainWindow):
     def __init__(self,db,rules,settings):
         super().__init__(); self.db=db; self.rules=rules; self.settings=settings; self.season=int(settings.get('season',2026)); self.ts=TeamService(db,rules); self.ex=ExportService(self.ts)
-        self.setWindowTitle('MNTrapTeam 2.2.0'); self.resize(1320,820); self.setStyleSheet(DARK)
+        self.setWindowTitle('MNTrapTeam 2.3.0'); self.resize(1320,820); self.setStyleSheet(DARK)
         self.tabs=QTabWidget(); self.setCentralWidget(self.tabs)
         self.dashboard=self.make_dashboard(); self.progress=self.make_progress(); self.race=self.make_race(); self.shooters=self.make_shooters(); self.imports=self.make_imports(); self.standings=self.make_standings(); self.projections=self.make_projections(); self.archive=self.make_archive(); self.event_intelligence=self.make_event_intelligence(); self.race_changes=self.make_race_changes(); self.settings_tab=self.make_settings()
         self.make_menu(); self.refresh_all()
