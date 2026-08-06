@@ -9,6 +9,7 @@ from .services import TeamService,ExportService,open_shootata_login
 from .importers import ScoreboardImporter
 from .ingestion import TrackedOfficialStatsImporter,BatchImportService
 from .planner import projected_team_rank, required_uniform_average_for_cut
+from .analytics import personal_progress
 from .sample_data import load as load_sample
 
 DARK='''QWidget{background:#19212b;color:#e8edf2;font-size:10pt} QLineEdit,QComboBox,QSpinBox,QDoubleSpinBox,QTableView,QTextEdit{background:#111820;border:1px solid #3b4a5b;padding:5px} QPushButton{background:#2574a9;border:0;padding:7px 12px;border-radius:3px} QPushButton:hover{background:#328bc3} QHeaderView::section{background:#273545;padding:6px;border:0} QTabBar::tab{padding:9px 15px;background:#273545} QTabBar::tab:selected{background:#2574a9}'''
@@ -29,9 +30,9 @@ class DictModel(QAbstractTableModel):
 class MainWindow(QMainWindow):
     def __init__(self,db,rules,settings):
         super().__init__(); self.db=db; self.rules=rules; self.settings=settings; self.season=int(settings.get('season',2026)); self.ts=TeamService(db,rules); self.ex=ExportService(self.ts)
-        self.setWindowTitle('MNTrapTeam 1.5'); self.resize(1320,820); self.setStyleSheet(DARK)
+        self.setWindowTitle('MNTrapTeam 1.8'); self.resize(1320,820); self.setStyleSheet(DARK)
         self.tabs=QTabWidget(); self.setCentralWidget(self.tabs)
-        self.dashboard=self.make_dashboard(); self.shooters=self.make_shooters(); self.imports=self.make_imports(); self.standings=self.make_standings(); self.projections=self.make_projections(); self.archive=self.make_archive(); self.settings_tab=self.make_settings()
+        self.dashboard=self.make_dashboard(); self.progress=self.make_progress(); self.shooters=self.make_shooters(); self.imports=self.make_imports(); self.standings=self.make_standings(); self.projections=self.make_projections(); self.archive=self.make_archive(); self.settings_tab=self.make_settings()
         self.make_menu(); self.refresh_all()
     def make_menu(self):
         f=self.menuBar().addMenu('&File');
@@ -41,6 +42,17 @@ class MainWindow(QMainWindow):
         w=QWidget(); v=QVBoxLayout(w); top=QHBoxLayout(); self.season_box=QSpinBox(); self.season_box.setRange(2000,2100); self.season_box.setValue(self.season); self.season_box.valueChanged.connect(self.change_season); top.addWidget(QLabel('Target year')); top.addWidget(self.season_box); top.addStretch(); b=QPushButton('Load sample data'); b.clicked.connect(self.load_sample); top.addWidget(b); v.addLayout(top)
         self.cards=QLabel(); self.cards.setTextFormat(Qt.RichText); self.cards.setMinimumHeight(130); v.addWidget(self.cards)
         self.dash_table=QTableView(); v.addWidget(self.dash_table); self.tabs.addTab(w,'Dashboard'); return w
+    def make_progress(self):
+        w=QWidget(); v=QVBoxLayout(w)
+        note=QLabel('Uses the ATA number saved under Settings. Event totals come from imported score records; official season totals remain authoritative.')
+        note.setWordWrap(True); v.addWidget(note)
+        row=QHBoxLayout()
+        refresh=QPushButton('Refresh my progress'); refresh.clicked.connect(self.refresh_progress); row.addWidget(refresh)
+        row.addStretch(); v.addLayout(row)
+        self.progress_cards=QLabel(); self.progress_cards.setTextFormat(Qt.RichText); self.progress_cards.setWordWrap(True); v.addWidget(self.progress_cards)
+        self.progress_disciplines=QTableView(); v.addWidget(QLabel('Discipline progress')); v.addWidget(self.progress_disciplines)
+        self.progress_events=QTableView(); v.addWidget(QLabel('Recent imported events')); v.addWidget(self.progress_events)
+        self.tabs.addTab(w,'My Progress'); return w
     def make_shooters(self):
         w=QWidget(); v=QVBoxLayout(w); form=QHBoxLayout(); self.q=QLineEdit(); self.q.setPlaceholderText('Search name or ATA number'); self.q.textChanged.connect(self.refresh_shooters); form.addWidget(self.q); add=QPushButton('Add / edit shooter'); add.clicked.connect(self.edit_shooter); form.addWidget(add); stats=QPushButton('Edit season stats'); stats.clicked.connect(self.edit_stats); form.addWidget(stats); v.addLayout(form); self.shooter_table=QTableView(); self.shooter_table.doubleClicked.connect(self.edit_shooter); v.addWidget(self.shooter_table); self.tabs.addTab(w,'Shooters'); return w
     def make_imports(self):
@@ -78,11 +90,41 @@ class MainWindow(QMainWindow):
     def make_settings(self):
         w=QWidget(); f=QFormLayout(w); self.user_ata=QLineEdit(self.settings.get('user_ata_number','')); f.addRow('Your ATA number',self.user_ata); self.threshold=QSpinBox(); self.threshold.setRange(50,100); self.threshold.setValue(int(self.settings.get('fuzzy_match_threshold',88))); f.addRow('Name-match threshold',self.threshold); b=QPushButton('Save settings'); b.clicked.connect(self.save_settings); f.addRow(b); self.tabs.addTab(w,'Settings'); return w
     def change_season(self,y): self.season=y; self.refresh_all()
-    def refresh_all(self): self.refresh_dashboard(); self.refresh_shooters(); self.refresh_standings(); self.refresh_projection_shooters(); self.refresh_snapshots(); self.refresh_imports()
+    def refresh_all(self): self.refresh_dashboard(); self.refresh_progress(); self.refresh_shooters(); self.refresh_standings(); self.refresh_projection_shooters(); self.refresh_snapshots(); self.refresh_imports()
     def refresh_imports(self):
         if hasattr(self,'import_table'):
             rows=self.db.query('SELECT filename,kind,rows_read,rows_imported,imported_at,warnings FROM imports ORDER BY id DESC LIMIT 100')
             self.import_table.setModel(DictModel(rows,[('filename','File'),('kind','Type'),('rows_read','Rows'),('rows_imported','Imported'),('imported_at','Imported at'),('warnings','Warnings')]))
+    def refresh_progress(self):
+        if not hasattr(self,'progress_cards'): return
+        ata=self.user_ata.text() if hasattr(self,'user_ata') else self.settings.get('user_ata_number','')
+        result=personal_progress(self.db,self.ts,self.season,ata)
+        if not result.get('found'):
+            self.progress_cards.setText('<h2>My Progress</h2><p>'+result.get('message','Set your ATA number in Settings.')+'</p>')
+            self.progress_disciplines.setModel(DictModel([],[])); self.progress_events.setModel(DictModel([],[])); return
+        shooter=result['shooter']
+        if not result.get('has_stats'):
+            self.progress_cards.setText(f"<h2>{shooter['display_name']}</h2><p>{result.get('message','No season statistics.')}</p>")
+        else:
+            ranked=result.get('ranking') or {}
+            gap=ranked.get('hoa_gap_to_cut')
+            gap_text='Cut line not established' if gap is None else f"{gap:+.2f} HOA points from cut"
+            reasons='<br>'.join(result.get('eligibility_reasons') or ['All eligibility requirements currently met'])
+            self.progress_cards.setText(
+                f"<h2>{shooter['display_name']} — {self.season}</h2>"
+                f"<b>Team:</b> {result['team']} &nbsp;&nbsp; "
+                f"<b>HOA:</b> {ranked.get('hoa',0):.2f}% &nbsp;&nbsp; "
+                f"<b>Rank:</b> {ranked.get('rank','—')} &nbsp;&nbsp; "
+                f"<b>Status:</b> {'On team' if ranked.get('selected') else 'Outside team'}<br>"
+                f"<b>Cut comparison:</b> {gap_text}<br>"
+                f"<b>Eligibility:</b> {'Eligible' if result['eligible'] else 'Not yet eligible'}<br>{reasons}"
+            )
+        discs=list(result.get('disciplines',{}).values())
+        for row in discs:
+            row['recent_500']=result.get('recent_500_average',{}).get(row['discipline'],0)
+        self.progress_disciplines.setModel(DictModel(discs,[('discipline','Discipline'),('targets','Imported Targets'),('hits','Hits'),('average','Imported Avg'),('recent_500','Recent 500 Avg'),('mn_targets','MN Targets'),('events','Events'),('mn_clubs','MN Clubs')]))
+        events=result.get('events',[])[:50]
+        self.progress_events.setModel(DictModel(events,[('event_date','Date'),('event_name','Event'),('discipline','Discipline'),('hits','Hits'),('targets','Targets'),('average','Average'),('location','Location'),('mn','MN'),('source','Source')]))
     def refresh_dashboard(self):
         rows=self.ts.season_rows(self.season); elig=sum(1 for r in rows if r['eligibility'].eligible); self.cards.setText(f'<h2>{self.season} Minnesota State Team Dashboard</h2><b>{len(rows)}</b> tracked shooters &nbsp;&nbsp; <b>{elig}</b> currently eligible &nbsp;&nbsp; <b>{len(self.db.query("SELECT id FROM imports"))}</b> imported files')
         top=sorted(rows,key=lambda r:r['hoa'],reverse=True)[:20]; self.dash_table.setModel(DictModel(top,[('display_name','Shooter'),('category','Category'),('hoa','HOA'),('cut_line_hoa','Cut HOA'),('hoa_gap_to_cut','Gap to Cut'),('birds_per_300_gap','Birds / 300'),('singles_targets','Singles'),('handicap_targets','Handicap'),('doubles_targets','Doubles')]))
