@@ -13,6 +13,7 @@ from .analytics import personal_progress
 from .sample_data import load as load_sample
 from .race import team_race
 from .event_intelligence import event_intelligence
+from .race_changes import race_changes_from_latest_snapshot
 
 DARK='''QWidget{background:#19212b;color:#e8edf2;font-size:10pt} QLineEdit,QComboBox,QSpinBox,QDoubleSpinBox,QTableView,QTextEdit{background:#111820;border:1px solid #3b4a5b;padding:5px} QPushButton{background:#2574a9;border:0;padding:7px 12px;border-radius:3px} QPushButton:hover{background:#328bc3} QHeaderView::section{background:#273545;padding:6px;border:0} QTabBar::tab{padding:9px 15px;background:#273545} QTabBar::tab:selected{background:#2574a9}'''
 
@@ -32,9 +33,9 @@ class DictModel(QAbstractTableModel):
 class MainWindow(QMainWindow):
     def __init__(self,db,rules,settings):
         super().__init__(); self.db=db; self.rules=rules; self.settings=settings; self.season=int(settings.get('season',2026)); self.ts=TeamService(db,rules); self.ex=ExportService(self.ts)
-        self.setWindowTitle('MNTrapTeam 2.1.0'); self.resize(1320,820); self.setStyleSheet(DARK)
+        self.setWindowTitle('MNTrapTeam 2.2.0'); self.resize(1320,820); self.setStyleSheet(DARK)
         self.tabs=QTabWidget(); self.setCentralWidget(self.tabs)
-        self.dashboard=self.make_dashboard(); self.progress=self.make_progress(); self.race=self.make_race(); self.shooters=self.make_shooters(); self.imports=self.make_imports(); self.standings=self.make_standings(); self.projections=self.make_projections(); self.archive=self.make_archive(); self.event_intelligence=self.make_event_intelligence(); self.settings_tab=self.make_settings()
+        self.dashboard=self.make_dashboard(); self.progress=self.make_progress(); self.race=self.make_race(); self.shooters=self.make_shooters(); self.imports=self.make_imports(); self.standings=self.make_standings(); self.projections=self.make_projections(); self.archive=self.make_archive(); self.event_intelligence=self.make_event_intelligence(); self.race_changes=self.make_race_changes(); self.settings_tab=self.make_settings()
         self.make_menu(); self.refresh_all()
     def make_menu(self):
         f=self.menuBar().addMenu('&File');
@@ -159,6 +160,30 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(w,'Event Intelligence')
         return w
 
+
+    def make_race_changes(self):
+        w=QWidget(); v=QVBoxLayout(w)
+        controls=QHBoxLayout()
+        self.changes_team=QComboBox()
+        self.changes_team.addItems(self.rules.rules['teams'])
+        self.changes_team.currentTextChanged.connect(self.refresh_race_changes)
+        controls.addWidget(QLabel('Team')); controls.addWidget(self.changes_team)
+        refresh=QPushButton('Compare with latest snapshot')
+        refresh.clicked.connect(self.refresh_race_changes)
+        controls.addWidget(refresh)
+        snapshot=QPushButton('Save snapshot now')
+        snapshot.clicked.connect(self.save_changes_snapshot)
+        controls.addWidget(snapshot)
+        controls.addStretch(); v.addLayout(controls)
+        self.changes_cards=QLabel()
+        self.changes_cards.setTextFormat(Qt.RichText)
+        self.changes_cards.setWordWrap(True)
+        v.addWidget(self.changes_cards)
+        self.changes_table=QTableView()
+        v.addWidget(self.changes_table)
+        self.tabs.addTab(w,'Race Changes')
+        return w
+
     def make_shooters(self):
         w=QWidget(); v=QVBoxLayout(w); form=QHBoxLayout(); self.q=QLineEdit(); self.q.setPlaceholderText('Search name or ATA number'); self.q.textChanged.connect(self.refresh_shooters); form.addWidget(self.q); add=QPushButton('Add / edit shooter'); add.clicked.connect(self.edit_shooter); form.addWidget(add); stats=QPushButton('Edit season stats'); stats.clicked.connect(self.edit_stats); form.addWidget(stats); v.addLayout(form); self.shooter_table=QTableView(); self.shooter_table.doubleClicked.connect(self.edit_shooter); v.addWidget(self.shooter_table); self.tabs.addTab(w,'Shooters'); return w
     def make_imports(self):
@@ -196,7 +221,7 @@ class MainWindow(QMainWindow):
     def make_settings(self):
         w=QWidget(); f=QFormLayout(w); self.user_ata=QLineEdit(self.settings.get('user_ata_number','')); f.addRow('Your ATA number',self.user_ata); self.threshold=QSpinBox(); self.threshold.setRange(50,100); self.threshold.setValue(int(self.settings.get('fuzzy_match_threshold',88))); f.addRow('Name-match threshold',self.threshold); b=QPushButton('Save settings'); b.clicked.connect(self.save_settings); f.addRow(b); self.tabs.addTab(w,'Settings'); return w
     def change_season(self,y): self.season=y; self.refresh_all()
-    def refresh_all(self): self.refresh_dashboard(); self.refresh_progress(); self.refresh_race(); self.refresh_shooters(); self.refresh_standings(); self.refresh_projection_shooters(); self.refresh_snapshots(); self.refresh_imports(); self.refresh_event_shooters(); self.refresh_event_intelligence()
+    def refresh_all(self): self.refresh_dashboard(); self.refresh_progress(); self.refresh_race(); self.refresh_shooters(); self.refresh_standings(); self.refresh_projection_shooters(); self.refresh_snapshots(); self.refresh_imports(); self.refresh_event_shooters(); self.refresh_event_intelligence(); self.refresh_race_changes()
     def refresh_imports(self):
         if hasattr(self,'import_table'):
             rows=self.db.query('SELECT filename,kind,rows_read,rows_imported,imported_at,warnings FROM imports ORDER BY id DESC LIMIT 100')
@@ -474,6 +499,70 @@ class MainWindow(QMainWindow):
                  ('straight','Perfect'),('in_state','MN'),('source','Source')],
             )
         )
+
+
+    def refresh_race_changes(self):
+        if not hasattr(self,'changes_team'):
+            return
+        team=self.changes_team.currentText()
+        result=race_changes_from_latest_snapshot(
+            self.db,
+            self.ts,
+            self.season,
+            team,
+        )
+        if not result.get('has_snapshot'):
+            self.changes_cards.setText(
+                f"<h2>{self.season} {team} Race Changes</h2>"
+                f"<p>{result.get('message','No snapshot available.')}</p>"
+            )
+            self.changes_table.setModel(DictModel([],[]))
+            return
+
+        old_cut=result.get('old_cut_line')
+        new_cut=result.get('new_cut_line')
+        cut_change=result.get('cut_line_change')
+        cut_text=(
+            'Not established'
+            if old_cut is None or new_cut is None
+            else f"{old_cut:.2f}% → {new_cut:.2f}% ({cut_change:+.2f})"
+        )
+        self.changes_cards.setText(
+            f"<h2>{self.season} {team} Race Changes</h2>"
+            f"<b>Compared with:</b> {result.get('snapshot_label') or 'Snapshot'} "
+            f"({result.get('snapshot_created_at') or 'unknown time'})<br>"
+            f"<b>Cut-line change:</b> {cut_text}<br>"
+            f"<b>{len(result.get('changes',[]))}</b> shooter changes detected"
+        )
+        self.changes_table.setModel(
+            DictModel(
+                result.get('changes',[]),
+                [
+                    ('team_change','Team Change'),
+                    ('display_name','Shooter'),
+                    ('old_rank','Old Rank'),
+                    ('new_rank','New Rank'),
+                    ('rank_change','Positions'),
+                    ('old_hoa','Old HOA'),
+                    ('new_hoa','New HOA'),
+                    ('hoa_change','HOA Change'),
+                    ('change_type','Change Type'),
+                ],
+            )
+        )
+
+    def save_changes_snapshot(self):
+        team=self.changes_team.currentText()
+        label,ok=QInputDialog.getText(
+            self,
+            'Snapshot label',
+            'Label for this standings snapshot',
+        )
+        if not ok:
+            return
+        self.ts.snapshot(self.season,label or f"{team} snapshot")
+        self.refresh_snapshots()
+        self.refresh_race_changes()
 
     def refresh_dashboard(self):
         rows=self.ts.season_rows(self.season); elig=sum(1 for r in rows if r['eligibility'].eligible); self.cards.setText(f'<h2>{self.season} Minnesota State Team Dashboard</h2><b>{len(rows)}</b> tracked shooters &nbsp;&nbsp; <b>{elig}</b> currently eligible &nbsp;&nbsp; <b>{len(self.db.query("SELECT id FROM imports"))}</b> imported files')
