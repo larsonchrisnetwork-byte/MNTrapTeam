@@ -276,7 +276,31 @@ def check_session(
                 timeout=timeout_seconds * 1000,
             )
             body_text = page.locator("body").inner_text(timeout=10000)
-            likely, detail = infer_authentication(provider, page.url, body_text)
+
+            labels = []
+            controls = page.locator(
+                "button, input[type=button], input[type=submit], "
+                "a, [role=button]"
+            )
+            for index in range(min(controls.count(), 200)):
+                control = controls.nth(index)
+                label = (
+                    control.get_attribute("value")
+                    or control.get_attribute("aria-label")
+                    or control.get_attribute("title")
+                    or control.inner_text(timeout=1000)
+                    or ""
+                )
+                label = " ".join(label.split())
+                if label:
+                    labels.append(label)
+
+            body_text += "\n" + "\n".join(labels)
+            likely, detail = infer_authentication(
+                provider,
+                page.url,
+                body_text,
+            )
         except Exception as exc:
             likely = None
             detail = f"Session check failed: {exc}"
