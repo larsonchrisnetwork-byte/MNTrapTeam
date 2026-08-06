@@ -9,3 +9,6 @@ data/archives/
 exports/
 .env
 *.log
+data/browser_sessions/
+data/connector_downloads/
+data/connector_traces/
