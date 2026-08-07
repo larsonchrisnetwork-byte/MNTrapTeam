@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from typing import Any
+
+from .normalization import (
+    inferred_state,
+    normalize_event_date,
+    normalize_shoot_name,
+)
 from .reconciliation import ScoreObservation, store_observation
 
 
@@ -24,6 +30,14 @@ def observe_event(database, **kwargs) -> int:
     official = kwargs.pop("official", None)
     if official is None:
         official = source == "myata"
+
+    kwargs["event_date"] = normalize_event_date(kwargs["event_date"])
+    kwargs["shoot_name"] = normalize_shoot_name(kwargs["shoot_name"])
+    if not kwargs.get("state"):
+        kwargs["state"] = inferred_state(kwargs["shoot_name"])
+    if "in_state" not in kwargs:
+        kwargs["in_state"] = kwargs.get("state") == "MN"
+
     return store_observation(
         database,
         ScoreObservation(source=source, official=bool(official), **kwargs),
@@ -43,13 +57,16 @@ def observe_myata_details(
         ("doubles", "DoublesShot", "DoublesHit"),
     )
     for row in rows:
-        shoot_number = str(row.get("ShootNumber") or "")
-        event_date = str(row.get("Date") or "")
-        shoot_name = str(row.get("Name") or "")
+        shoot_number = str(row.get("ShootNumber") or "").strip()
+        event_date = normalize_event_date(str(row.get("Date") or ""))
+        shoot_name = normalize_shoot_name(str(row.get("Name") or ""))
+        state = str(row.get("State") or inferred_state(shoot_name)).upper()
+
         for discipline, target_field, hit_field in mappings:
             targets = int(row.get(target_field) or 0)
             if not targets:
                 continue
+            hits = int(row.get(hit_field) or 0)
             observe_event(
                 database,
                 shooter_id=shooter_id,
@@ -58,12 +75,16 @@ def observe_myata_details(
                 shoot_name=shoot_name,
                 discipline=discipline,
                 targets=targets,
-                hits=int(row.get(hit_field) or 0),
+                hits=hits,
                 source="myata",
-                source_record_id=f"{shoot_number}:{event_date}:{discipline}",
+                source_record_id=(
+                    f"{shooter_id}:{season}:{shoot_number}:"
+                    f"{event_date}:{discipline}"
+                ),
                 shoot_number=shoot_number,
                 club=shoot_name,
-                state="",
+                state=state,
+                in_state=state == "MN",
                 official=True,
             )
             imported += 1
