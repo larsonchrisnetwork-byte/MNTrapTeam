@@ -97,6 +97,8 @@ def observation_key(observation: ScoreObservation) -> str:
     if observation.source_record_id:
         raw = (
             f"{observation.normalized_source}|"
+            f"{observation.shooter_id}|"
+            f"{observation.season}|"
             f"{observation.source_record_id}|"
             f"{observation.discipline}"
         )

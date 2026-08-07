@@ -83,3 +83,33 @@ def test_totals_use_selected_events():
     totals = totals_from_events(events)
     assert totals["disciplines"]["singles"]["average"] == 98.0
     assert totals["total_targets"] == 200
+
+def test_source_record_ids_are_unique_per_shooter_and_season():
+    from mntrapteam.reconciliation import ScoreObservation, observation_key
+
+    first = ScoreObservation(
+        shooter_id=1,
+        season=2026,
+        event_date="2026-07-19",
+        shoot_name="Buffalo Gun Club",
+        discipline="doubles",
+        targets=100,
+        hits=96,
+        source="myata",
+        source_record_id="4359:2026-07-19:doubles",
+        official=True,
+    )
+    second = ScoreObservation(
+        shooter_id=2,
+        season=2026,
+        event_date="2026-07-19",
+        shoot_name="Buffalo Gun Club",
+        discipline="doubles",
+        targets=100,
+        hits=97,
+        source="myata",
+        source_record_id="4359:2026-07-19:doubles",
+        official=True,
+    )
+
+    assert observation_key(first) != observation_key(second)
