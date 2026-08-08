@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .haa_gate import haa_status
+from .reconciliation import SOURCE_PRIORITY
 from .live_display import actionable_missing_requirements
 from .official_baseline import ensure_schema as ensure_baseline_schema, get_baseline
 
@@ -36,6 +38,42 @@ def _hoa(values: dict[str, dict[str, Any]]) -> float:
     return _hoa_from_disciplines(values)
 
 
+def _provisional_source_key(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if "myata" in text:
+        return "myata"
+    if "shootscoreboard" in text:
+        return "shootscoreboard"
+    if "sos" in text and "clay" in text:
+        return "sosclays"
+    if text.startswith("ata ") or "shootata" in text:
+        return "ata_scores"
+    return "manual"
+
+
+def _provisional_event_key(row: dict[str, Any]) -> tuple:
+    event_name = str(row.get("event_name") or "").strip()
+    match = re.search(r"\b(?:EVENT|E)\s*#?\s*(\d+)\b", event_name, re.IGNORECASE)
+    if match:
+        event_slot = f"E{int(match.group(1))}"
+    else:
+        event_slot = re.sub(r"[^A-Z0-9]+", " ", event_name.upper()).strip()
+        if not event_slot:
+            club = re.sub(
+                r"[^A-Z0-9]+",
+                " ",
+                str(row.get("club_key") or "").upper(),
+            ).strip()
+            event_slot = f"CLUB:{club}"
+
+    return (
+        str(row.get("event_date") or ""),
+        str(row.get("discipline") or "").lower(),
+        event_slot,
+        int(row.get("targets") or 0),
+    )
+
+
 def _provisional_after_baseline(database, shooter_id: int, through_date: str):
     empty = {
         "rows": [],
@@ -50,7 +88,7 @@ def _provisional_after_baseline(database, shooter_id: int, through_date: str):
 
     rows = database.query(
         """
-        SELECT event_date,event_name,discipline,targets,hits,
+        SELECT id,event_date,event_name,discipline,targets,hits,
                in_state,club_key,source,official
         FROM scores
         WHERE shooter_id=?
@@ -61,35 +99,69 @@ def _provisional_after_baseline(database, shooter_id: int, through_date: str):
         (shooter_id, through_date),
     )
 
-    totals = {d: {"targets": 0, "hits": 0} for d in DISCIPLINES}
-    mn = {d: 0 for d in DISCIPLINES}
+    selected = {}
     sources = set()
-    clubs = set()
-    latest = ""
 
-    output_rows = []
     for raw in rows:
         row = dict(raw)
         discipline = str(row.get("discipline") or "").lower()
-        if discipline not in totals:
+        if discipline not in DISCIPLINES:
             continue
+
+        source = str(row.get("source") or "").strip()
+        if source:
+            sources.add(source)
+
+        key = _provisional_event_key(row)
+        current = selected.get(key)
+
+        candidate_priority = SOURCE_PRIORITY.get(
+            _provisional_source_key(source),
+            0,
+        )
+        current_priority = (
+            SOURCE_PRIORITY.get(
+                _provisional_source_key(current.get("source")),
+                0,
+            )
+            if current
+            else -1
+        )
+
+        if current is None or candidate_priority > current_priority:
+            selected[key] = row
+
+    selected_rows = sorted(
+        selected.values(),
+        key=lambda row: (
+            str(row.get("event_date") or ""),
+            int(row.get("id") or 0),
+        ),
+    )
+
+    totals = {d: {"targets": 0, "hits": 0} for d in DISCIPLINES}
+    mn = {d: 0 for d in DISCIPLINES}
+    clubs = set()
+    latest = ""
+
+    for row in selected_rows:
+        discipline = str(row.get("discipline") or "").lower()
         targets = int(row.get("targets") or 0)
         hits = int(row.get("hits") or 0)
+
         totals[discipline]["targets"] += targets
         totals[discipline]["hits"] += hits
+
         if int(row.get("in_state") or 0):
             mn[discipline] += targets
             club = str(row.get("club_key") or "").strip()
             if club:
                 clubs.add(club.upper())
-        source = str(row.get("source") or "").strip()
-        if source:
-            sources.add(source)
+
         latest = max(latest, str(row.get("event_date") or ""))
-        output_rows.append(row)
 
     return {
-        "rows": output_rows,
+        "rows": selected_rows,
         "disciplines": totals,
         "mn": mn,
         "sources": sorted(sources),

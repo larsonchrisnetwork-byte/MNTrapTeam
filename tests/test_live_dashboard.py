@@ -1,4 +1,8 @@
-from mntrapteam.live_dashboard import _hoa_from_disciplines, _season_values
+from mntrapteam.live_dashboard import (
+    _hoa_from_disciplines,
+    _provisional_after_baseline,
+    _season_values,
+)
 
 
 def test_hoa_from_three_disciplines():
@@ -32,3 +36,80 @@ def test_season_values_builds_averages():
     assert result["singles"]["average"] == 96.0
     assert result["handicap"]["average"] == 89.0
     assert result["doubles"]["average"] == 94.0
+
+
+
+def test_duplicate_live_sources_count_same_events_once():
+    base_events = [
+        ("2026-08-01", "E1 - Saturday Singles", "singles", 100, 97),
+        ("2026-08-01", "E2 - Saturday Handicap", "handicap", 100, 93),
+        ("2026-08-02", "E4 - Sunday Singles", "singles", 100, 98),
+        ("2026-08-02", "E5 - Sunday Handicap", "handicap", 100, 94),
+        ("2026-08-02", "E6 - Sunday Doubles", "doubles", 100, 93),
+    ]
+
+    rows = []
+    row_id = 1
+
+    for event_date, sos_name, discipline, targets, hits in base_events:
+        event_number = sos_name.split()[0]
+
+        rows.append({
+            "id": row_id,
+            "event_date": event_date,
+            "event_name": sos_name,
+            "discipline": discipline,
+            "targets": targets,
+            "hits": hits,
+            "in_state": 1,
+            "club_key": "MONTICELLO SPORTSMEN CLUB",
+            "source": "SOS Clays",
+            "official": 0,
+        })
+        row_id += 1
+
+        rows.append({
+            "id": row_id,
+            "event_date": event_date,
+            "event_name": f"{event_number} {discipline.upper()}",
+            "discipline": discipline,
+            "targets": targets,
+            "hits": hits,
+            "in_state": 0,
+            "club_key": "2026 JOHN BERING MEMORIAL TRAPSHOOT.",
+            "source": "ShootScoreBoard recent-scout",
+            "official": 0,
+        })
+        row_id += 1
+
+    class FakeDatabase:
+        def query(self, sql, params=()):
+            return rows
+
+    result = _provisional_after_baseline(
+        FakeDatabase(),
+        shooter_id=69,
+        through_date="2026-07-19",
+    )
+
+    assert len(result["rows"]) == 5
+    assert result["disciplines"]["singles"] == {
+        "targets": 200,
+        "hits": 195,
+    }
+    assert result["disciplines"]["handicap"] == {
+        "targets": 200,
+        "hits": 187,
+    }
+    assert result["disciplines"]["doubles"] == {
+        "targets": 100,
+        "hits": 93,
+    }
+    assert sum(
+        item["targets"] for item in result["disciplines"].values()
+    ) == 500
+    assert result["mn"] == {
+        "singles": 200,
+        "handicap": 200,
+        "doubles": 100,
+    }
