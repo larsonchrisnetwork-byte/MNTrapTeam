@@ -15,6 +15,7 @@ from .race import team_race
 from .event_intelligence import event_intelligence
 from .race_changes import race_changes_from_latest_snapshot
 from .live_dashboard import live_team_rows, live_dashboard_for_ata
+from .sos_api import SOSClient, candidate_for_shoot_id, import_sos_shoot
 
 DARK='''QWidget{background:#19212b;color:#e8edf2;font-size:10pt} QLineEdit,QComboBox,QSpinBox,QDoubleSpinBox,QTableView,QTextEdit{background:#111820;border:1px solid #3b4a5b;padding:5px} QPushButton{background:#2574a9;border:0;padding:7px 12px;border-radius:3px} QPushButton:hover{background:#328bc3} QHeaderView::section{background:#273545;padding:6px;border:0} QTabBar::tab{padding:9px 15px;background:#273545} QTabBar::tab:selected{background:#2574a9}'''
 
@@ -59,7 +60,7 @@ class DictModel(QAbstractTableModel):
 class MainWindow(QMainWindow):
     def __init__(self,db,rules,settings):
         super().__init__(); self.db=db; self.rules=rules; self.settings=settings; self.season=int(settings.get('season',2026)); self.ts=TeamService(db,rules); self.ex=ExportService(self.ts)
-        self.setWindowTitle('MNTrapTeam 4.5.1'); self.resize(1320,820); self.setStyleSheet(DARK)
+        self.setWindowTitle('MNTrapTeam 5.2.0'); self.resize(1320,820); self.setStyleSheet(DARK)
         self.tabs=QTabWidget(); self.setCentralWidget(self.tabs)
         self.dashboard=self.make_dashboard(); self.live_team=self.make_live_team(); self.progress=self.make_progress(); self.race=self.make_race(); self.shooters=self.make_shooters(); self.imports=self.make_imports(); self.standings=self.make_standings(); self.projections=self.make_projections(); self.archive=self.make_archive(); self.event_intelligence=self.make_event_intelligence(); self.race_changes=self.make_race_changes(); self.settings_tab=self.make_settings()
         self.make_menu(); self.refresh_all()
@@ -347,8 +348,8 @@ class MainWindow(QMainWindow):
     def make_shooters(self):
         w=QWidget(); v=QVBoxLayout(w); form=QHBoxLayout(); self.q=QLineEdit(); self.q.setPlaceholderText('Search name or ATA number'); self.q.textChanged.connect(self.refresh_shooters); form.addWidget(self.q); add=QPushButton('Add / edit shooter'); add.clicked.connect(self.edit_shooter); form.addWidget(add); stats=QPushButton('Edit season stats'); stats.clicked.connect(self.edit_stats); form.addWidget(stats); v.addLayout(form); self.shooter_table=QTableView(); self.shooter_table.doubleClicked.connect(self.edit_shooter); v.addWidget(self.shooter_table); self.tabs.addTab(w,'Shooters'); return w
     def make_imports(self):
-        w=QWidget(); v=QVBoxLayout(w); info=QLabel('Import official ShootATA exports or ShootScoreBoard CSV/XLSX/HTML/PDF reports. ShootScoreBoard data is treated as unofficial.'); info.setWordWrap(True); v.addWidget(info)
-        row=QHBoxLayout(); b1=QPushButton('Import official ShootATA file'); b1.clicked.connect(self.import_official); row.addWidget(b1); b2=QPushButton('Import ShootScoreBoard report'); b2.clicked.connect(self.import_scoreboard); row.addWidget(b2); batch=QPushButton('Import folder'); batch.clicked.connect(self.import_folder); row.addWidget(batch); b3=QPushButton('Open ShootATA login'); b3.clicked.connect(open_shootata_login); row.addWidget(b3); row.addStretch(); v.addLayout(row)
+        w=QWidget(); v=QVBoxLayout(w); info=QLabel('Import live SOS Clays scores, official ShootATA exports, or ShootScoreBoard reports. SOS and ShootScoreBoard scores are provisional until reconciled with MyATA.'); info.setWordWrap(True); v.addWidget(info)
+        row=QHBoxLayout(); sos=QPushButton('Import SOS shoot'); sos.clicked.connect(self.import_sos_shoot); row.addWidget(sos); b1=QPushButton('Import official ShootATA file'); b1.clicked.connect(self.import_official); row.addWidget(b1); b2=QPushButton('Import ShootScoreBoard report'); b2.clicked.connect(self.import_scoreboard); row.addWidget(b2); batch=QPushButton('Import folder'); batch.clicked.connect(self.import_folder); row.addWidget(batch); b3=QPushButton('Open ShootATA login'); b3.clicked.connect(open_shootata_login); row.addWidget(b3); row.addStretch(); v.addLayout(row)
         self.import_log=QTextEdit(); self.import_log.setReadOnly(True); v.addWidget(self.import_log); self.import_table=QTableView(); v.addWidget(QLabel('Import history')); v.addWidget(self.import_table); self.tabs.addTab(w,'Imports'); return w
     def make_standings(self):
         w=QWidget(); v=QVBoxLayout(w); row=QHBoxLayout(); self.team_box=QComboBox(); self.team_box.addItems(self.rules.rules['teams']); self.team_box.currentTextChanged.connect(self.refresh_standings); row.addWidget(QLabel('Team')); row.addWidget(self.team_box); row.addStretch();
@@ -778,6 +779,62 @@ class MainWindow(QMainWindow):
         if not ok:return
         try: n,w=ScoreboardImporter(self.db,self.threshold.value()).import_file(p,self.season,club=club,in_state=True); self.import_log.append(f'Scoreboard import: {n} event scores from {p}\n'+'\n'.join(w)); self.refresh_all()
         except Exception as e: QMessageBox.critical(self,'Import failed',str(e))
+    def import_sos_shoot(self):
+        email,ok=QInputDialog.getText(
+            self,
+            'SOS Clays sign-in',
+            'SOS email (credentials are used only for this import and are not saved):',
+        )
+        if not ok or not email.strip():return
+        password,ok=QInputDialog.getText(
+            self,
+            'SOS Clays sign-in',
+            'SOS password:',
+            QLineEdit.Password,
+        )
+        if not ok or not password:return
+        shoot_id,ok=QInputDialog.getInt(
+            self,
+            'SOS shoot',
+            'SOS shoot ID:',
+            1,
+            1,
+            9999999,
+        )
+        if not ok:return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            client=SOSClient()
+            client.login(email.strip(),password)
+            password=''
+            candidate=candidate_for_shoot_id(client,shoot_id)
+            result=import_sos_shoot(
+                self.db,
+                client,
+                candidate,
+                self.season,
+                mn_only=True,
+            )
+            lines=[
+                f'SOS import: {result.shoot_name} ({result.shoot_id})',
+                f'Events found: {result.events_found}',
+                f'High-gun rows found: {result.score_rows_found}',
+                f'MN scores written/updated: {result.score_rows_imported}',
+                f'New shooters: {result.shooters_created}',
+            ]
+            lines.extend(f'WARNING: {warning}' for warning in result.warnings)
+            self.import_log.append('\n'.join(lines))
+            self.refresh_all()
+            QMessageBox.information(
+                self,
+                'SOS import complete',
+                f'{result.score_rows_imported} Minnesota score rows were written/updated.',
+            )
+        except Exception as e:
+            QMessageBox.critical(self,'SOS import failed',str(e))
+        finally:
+            password=''
+            QApplication.restoreOverrideCursor()
     def _projection_additions(self):
         return {disc:(boxes[0].value(),boxes[1].value()) for disc,boxes in self.proj_inputs.items()}
     def import_folder(self):
@@ -837,7 +894,6 @@ class MainWindow(QMainWindow):
     def export_pdf(self): QMessageBox.information(self,'Export',f'Created {self.ex.pdf_team(self.season,self.team_box.currentText())}')
     def save_settings(self):
         self.settings['season']=self.season; self.settings['user_ata_number']=self.user_ata.text(); self.settings['fuzzy_match_threshold']=self.threshold.value(); (CONFIG/'settings.json').write_text(json.dumps(self.settings,indent=2)); QMessageBox.information(self,'Settings','Settings saved.')
-
 
 
 
