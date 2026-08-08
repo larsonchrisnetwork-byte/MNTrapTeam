@@ -16,6 +16,9 @@ BASE_URL = "https://shootscoreboard.com/"
 USER_AGENT = "MNTrapTeam/2.4 (+public-score-import)"
 DISCIPLINE_WORDS = {
     "SINGLES": "singles",
+    "16 YARD": "singles",
+    "16-YARD": "singles",
+    "16YARD": "singles",
     "HANDICAP": "handicap",
     "DOUBLES": "doubles",
 }
@@ -228,7 +231,16 @@ def load_public_shoot(shoot: str | int, fetcher=fetch_text) -> WebShoot:
     events = []
     for event_id in event_ids:
         url = f"{BASE_URL}reports.cfm?shootid={shoot_id}&sorteventid={event_id}"
-        events.append(parse_event_report(fetcher(url), event_id))
+        try:
+            event = parse_event_report(fetcher(url), event_id)
+        except ValueError:
+            # Public ShootScoreBoard pages sometimes include AIM/youth,
+            # preliminary, or malformed event pages.  Those should not cause
+            # the entire shoot to be discarded when other ATA events are valid.
+            continue
+        events.append(event)
+    if not events:
+        raise ValueError("No supported ATA event reports were found for this shoot")
     return WebShoot(shoot_id, name, start_date, end_date, menu_url, events)
 
 
@@ -239,6 +251,7 @@ def import_public_shoot(
     mn_only: bool = True,
     club: str = "",
     matcher_threshold: int = 88,
+    in_state: bool = True,
 ) -> WebImportResult:
     signature = "|".join(
         f"{event.event_id}:{len(event.entries)}:"
@@ -269,7 +282,7 @@ def import_public_shoot(
             shoot.name,
             club,
             "",
-            "MN",
+            "MN" if in_state else "",
             shoot.start_date,
             shoot.end_date,
             "ShootScoreBoard web",
@@ -319,7 +332,7 @@ def import_public_shoot(
                     event.discipline,
                     row["targets"],
                     row["hits"],
-                    int(row["state"] == "MN"),
+                    int(in_state),
                     club or shoot.name,
                     "ShootScoreBoard web",
                     0,

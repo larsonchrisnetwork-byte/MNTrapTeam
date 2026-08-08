@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 import json
 from pathlib import Path
 from PySide6.QtCore import Qt,QAbstractTableModel,QModelIndex
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction,QColor
 from PySide6.QtWidgets import *
 from .paths import CONFIG
 from .services import TeamService,ExportService,open_shootata_login
@@ -14,6 +14,7 @@ from .sample_data import load as load_sample
 from .race import team_race
 from .event_intelligence import event_intelligence
 from .race_changes import race_changes_from_latest_snapshot
+from .live_dashboard import live_team_rows, live_dashboard_for_ata
 
 DARK='''QWidget{background:#19212b;color:#e8edf2;font-size:10pt} QLineEdit,QComboBox,QSpinBox,QDoubleSpinBox,QTableView,QTextEdit{background:#111820;border:1px solid #3b4a5b;padding:5px} QPushButton{background:#2574a9;border:0;padding:7px 12px;border-radius:3px} QPushButton:hover{background:#328bc3} QHeaderView::section{background:#273545;padding:6px;border:0} QTabBar::tab{padding:9px 15px;background:#273545} QTabBar::tab:selected{background:#2574a9}'''
 
@@ -22,10 +23,35 @@ class DictModel(QAbstractTableModel):
     def rowCount(self,parent=QModelIndex()): return len(self.rows)
     def columnCount(self,parent=QModelIndex()): return len(self.columns)
     def data(self,index,role=Qt.DisplayRole):
-        if not index.isValid() or role not in (Qt.DisplayRole,Qt.EditRole): return None
-        key,label=self.columns[index.column()]; v=self.rows[index.row()].get(key,'')
-        if isinstance(v,float): return f'{v:.2f}'
-        if isinstance(v,bool): return 'Yes' if v else 'No'
+        if not index.isValid():
+            return None
+
+        row=self.rows[index.row()]
+
+        if role==Qt.BackgroundRole:
+            status=row.get('_eligibility_color')
+            if status=='green':
+                return QColor(45,105,55)
+            if status=='red':
+                return QColor(125,45,45)
+            return None
+
+        if role==Qt.ForegroundRole:
+            if row.get('_eligibility_color') in ('green','red'):
+                return QColor(255,255,255)
+            return None
+
+        if role not in (Qt.DisplayRole,Qt.EditRole):
+            return None
+
+        key,label=self.columns[index.column()]
+        v=row.get(key,'')
+
+        if isinstance(v,float):
+            return f'{v:.2f}'
+        if isinstance(v,bool):
+            return 'Yes' if v else 'No'
+
         return str(v if v is not None else '')
     def headerData(self,section,orientation,role=Qt.DisplayRole):
         if role==Qt.DisplayRole: return self.columns[section][1] if orientation==Qt.Horizontal else section+1
@@ -33,9 +59,9 @@ class DictModel(QAbstractTableModel):
 class MainWindow(QMainWindow):
     def __init__(self,db,rules,settings):
         super().__init__(); self.db=db; self.rules=rules; self.settings=settings; self.season=int(settings.get('season',2026)); self.ts=TeamService(db,rules); self.ex=ExportService(self.ts)
-        self.setWindowTitle('MNTrapTeam 3.1.0'); self.resize(1320,820); self.setStyleSheet(DARK)
+        self.setWindowTitle('MNTrapTeam 4.5.1'); self.resize(1320,820); self.setStyleSheet(DARK)
         self.tabs=QTabWidget(); self.setCentralWidget(self.tabs)
-        self.dashboard=self.make_dashboard(); self.progress=self.make_progress(); self.race=self.make_race(); self.shooters=self.make_shooters(); self.imports=self.make_imports(); self.standings=self.make_standings(); self.projections=self.make_projections(); self.archive=self.make_archive(); self.event_intelligence=self.make_event_intelligence(); self.race_changes=self.make_race_changes(); self.settings_tab=self.make_settings()
+        self.dashboard=self.make_dashboard(); self.live_team=self.make_live_team(); self.progress=self.make_progress(); self.race=self.make_race(); self.shooters=self.make_shooters(); self.imports=self.make_imports(); self.standings=self.make_standings(); self.projections=self.make_projections(); self.archive=self.make_archive(); self.event_intelligence=self.make_event_intelligence(); self.race_changes=self.make_race_changes(); self.settings_tab=self.make_settings()
         self.make_menu(); self.refresh_all()
     def make_menu(self):
         f=self.menuBar().addMenu('&File');
@@ -184,6 +210,140 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(w,'Race Changes')
         return w
 
+
+    def make_live_team(self):
+        w=QWidget()
+        v=QVBoxLayout(w)
+        note=QLabel(
+            "Primary current-year team view. HAA-qualified shooters appear "
+            "first. Live totals use fast sources when available; official "
+            "totals use MyATA-confirmed observations."
+        )
+        note.setWordWrap(True)
+        v.addWidget(note)
+
+        controls=QHBoxLayout()
+        self.live_team_box=QComboBox()
+        self.live_team_box.addItems(self.rules.rules["teams"])
+        if self.live_team_box.findText("MEN") >= 0:
+            self.live_team_box.setCurrentText("MEN")
+        self.live_team_box.currentTextChanged.connect(self.refresh_live_team)
+        controls.addWidget(QLabel("Team"))
+        controls.addWidget(self.live_team_box)
+
+        refresh=QPushButton("Refresh live race")
+        refresh.clicked.connect(self.refresh_live_team)
+        controls.addWidget(refresh)
+
+        mine=QPushButton("Show my row")
+        mine.clicked.connect(self.show_my_live_row)
+        controls.addWidget(mine)
+        controls.addStretch()
+        v.addLayout(controls)
+
+        self.live_cards=QLabel()
+        self.live_cards.setTextFormat(Qt.RichText)
+        self.live_cards.setWordWrap(True)
+        self.live_cards.setMinimumHeight(100)
+        v.addWidget(self.live_cards)
+
+        self.live_table=QTableView()
+        self.live_table.setAlternatingRowColors(True)
+        self.live_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        v.addWidget(self.live_table)
+
+        self.tabs.addTab(w,"2026 Live Team")
+        return w
+
+    def refresh_live_team(self):
+        if not hasattr(self,"live_team_box"):
+            return
+        team=self.live_team_box.currentText() or "MEN"
+        result=live_team_rows(self.db,self.ts,self.season,team)
+        summary=result["summary"]
+        cut=summary["live_cut_hoa"]
+        cut_text="Not established" if cut is None else f"{cut:.2f}%"
+
+        self.live_cards.setText(
+            f"<h2>{self.season} Men's Team Race - Official vs Current</h2>"
+            f"<b>{summary['fully_qualified']}</b> fully qualified &nbsp;&nbsp; "
+            f"<b>{summary['haa_qualified']}</b> HAA-qualified &nbsp;&nbsp; "
+            f"<b>{summary['selected']}/{summary['team_size']}</b> current team &nbsp;&nbsp; "
+            f"<b>Current cut:</b> {cut_text}<br>"
+            f"<b>{summary['provisional_shooters']}</b> shooters with newer unofficial scores &nbsp;&nbsp; "
+            f"<b>{summary['pending_targets']:,}</b> targets pending MyATA confirmation &nbsp;&nbsp; "
+            f"<b>{summary['baseline_ready']}</b> shooters safe for provisional overlay"
+        )
+
+        self.live_table.setModel(
+            DictModel(
+                result["rows"],
+                [
+                    ("race_rank","Race Rank"),
+                    ("qualified_rank","Qualified Rank"),
+                    ("live_team","Team"),
+                    ("qualification_status","Qualified?"),
+                    ("display_name","Shooter"),
+                    ("ata_number","ATA #"),
+                    ("current_hoa","Current HOA"),
+                    ("official_hoa","MyATA HOA"),
+                    ("hoa_delta","Current - MyATA"),
+                    ("live_cut_hoa","Current Cut"),
+                    ("live_gap_to_cut","Gap to Cut"),
+                    ("haa_gate","HAA"),
+                    ("live_singles_targets","Current Singles"),
+                    ("live_handicap_targets","Current Handicap"),
+                    ("live_doubles_targets","Current Doubles"),
+                    ("current_mn_singles","MN Singles"),
+                    ("current_mn_handicap","MN Handicap"),
+                    ("current_mn_doubles","MN Doubles"),
+                    ("current_mn_clubs","MN Clubs"),
+                    ("need_to_qualify","What They Need"),
+                    ("pending_targets","Pending Targets"),
+                    ("baseline_status","Baseline Ready"),
+                    ("official_through_date","MyATA Through"),
+                    ("latest_provisional_date","Newest Unofficial"),
+                    ("race_source","Data Source"),
+                ],
+            )
+        )
+        self.live_table.resizeColumnsToContents()
+
+    def show_my_live_row(self):
+        ata=(
+            self.user_ata.text()
+            if hasattr(self,"user_ata")
+            else self.settings.get("user_ata_number","")
+        )
+        result=live_dashboard_for_ata(
+            self.db,
+            self.ts,
+            self.season,
+            ata,
+            self.live_team_box.currentText() or "MEN",
+        )
+        shooter=result.get("shooter")
+        if not shooter:
+            QMessageBox.information(
+                self,
+                "My live row",
+                "Your ATA number was not found in the current live team rows.",
+            )
+            return
+
+        gap=shooter.get("live_gap_to_cut")
+        gap_text="Not established" if gap is None else f"{gap:+.2f}"
+        message=(
+            f"{shooter['display_name']}\n"
+            f"HAA: {shooter['haa_gate']} {shooter['haa_route']}\n"
+            f"Eligible: {'Yes' if shooter.get('eligible') else 'No'}\n"
+            f"Live HOA: {shooter['live_hoa']:.2f}%\n"
+            f"Official HOA: {shooter['official_hoa']:.2f}%\n"
+            f"Pending targets: {shooter['pending_targets']}\n"
+            f"Gap to live cut: {gap_text}"
+        )
+        QMessageBox.information(self,"My live team position",message)
+
     def make_shooters(self):
         w=QWidget(); v=QVBoxLayout(w); form=QHBoxLayout(); self.q=QLineEdit(); self.q.setPlaceholderText('Search name or ATA number'); self.q.textChanged.connect(self.refresh_shooters); form.addWidget(self.q); add=QPushButton('Add / edit shooter'); add.clicked.connect(self.edit_shooter); form.addWidget(add); stats=QPushButton('Edit season stats'); stats.clicked.connect(self.edit_stats); form.addWidget(stats); v.addLayout(form); self.shooter_table=QTableView(); self.shooter_table.doubleClicked.connect(self.edit_shooter); v.addWidget(self.shooter_table); self.tabs.addTab(w,'Shooters'); return w
     def make_imports(self):
@@ -221,7 +381,7 @@ class MainWindow(QMainWindow):
     def make_settings(self):
         w=QWidget(); f=QFormLayout(w); self.user_ata=QLineEdit(self.settings.get('user_ata_number','')); f.addRow('Your ATA number',self.user_ata); self.threshold=QSpinBox(); self.threshold.setRange(50,100); self.threshold.setValue(int(self.settings.get('fuzzy_match_threshold',88))); f.addRow('Name-match threshold',self.threshold); b=QPushButton('Save settings'); b.clicked.connect(self.save_settings); f.addRow(b); self.tabs.addTab(w,'Settings'); return w
     def change_season(self,y): self.season=y; self.refresh_all()
-    def refresh_all(self): self.refresh_dashboard(); self.refresh_progress(); self.refresh_race(); self.refresh_shooters(); self.refresh_standings(); self.refresh_projection_shooters(); self.refresh_snapshots(); self.refresh_imports(); self.refresh_event_shooters(); self.refresh_event_intelligence(); self.refresh_race_changes()
+    def refresh_all(self): self.refresh_dashboard(); self.refresh_live_team(); self.refresh_progress(); self.refresh_race(); self.refresh_shooters(); self.refresh_standings(); self.refresh_projection_shooters(); self.refresh_snapshots(); self.refresh_imports(); self.refresh_event_shooters(); self.refresh_event_intelligence(); self.refresh_race_changes()
     def refresh_imports(self):
         if hasattr(self,'import_table'):
             rows=self.db.query('SELECT filename,kind,rows_read,rows_imported,imported_at,warnings FROM imports ORDER BY id DESC LIMIT 100')
@@ -242,10 +402,10 @@ class MainWindow(QMainWindow):
             gap_text='Cut line not established' if gap is None else f"{gap:+.2f} HOA points from cut"
             reasons='<br>'.join(result.get('eligibility_reasons') or ['All eligibility requirements currently met'])
             self.progress_cards.setText(
-                f"<h2>{shooter['display_name']} — {self.season}</h2>"
+                f"<h2>{shooter['display_name']} ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â {self.season}</h2>"
                 f"<b>Team:</b> {result['team']} &nbsp;&nbsp; "
                 f"<b>HOA:</b> {ranked.get('hoa',0):.2f}% &nbsp;&nbsp; "
-                f"<b>Rank:</b> {ranked.get('rank','—')} &nbsp;&nbsp; "
+                f"<b>Rank:</b> {ranked.get('rank','ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â')} &nbsp;&nbsp; "
                 f"<b>Status:</b> {'On team' if ranked.get('selected') else 'Outside team'}<br>"
                 f"<b>Cut comparison:</b> {gap_text}<br>"
                 f"<b>Eligibility:</b> {'Eligible' if result['eligible'] else 'Not yet eligible'}<br>{reasons}"
@@ -318,10 +478,10 @@ class MainWindow(QMainWindow):
                 or ['All eligibility requirements currently met']
             )
             self.progress_cards.setText(
-                f"<h2>{shooter['display_name']} — {self.season}</h2>"
+                f"<h2>{shooter['display_name']} ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â {self.season}</h2>"
                 f"<b>Team:</b> {result['team']} &nbsp;&nbsp; "
                 f"<b>HOA:</b> {ranked.get('hoa',0):.2f}% &nbsp;&nbsp; "
-                f"<b>Rank:</b> {ranked.get('rank','—')} &nbsp;&nbsp; "
+                f"<b>Rank:</b> {ranked.get('rank','ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â')} &nbsp;&nbsp; "
                 f"<b>Status:</b> "
                 f"{'On team' if ranked.get('selected') else 'Outside team'}<br>"
                 f"<b>Cut comparison:</b> {gap_text}<br>"
@@ -451,7 +611,7 @@ class MainWindow(QMainWindow):
         )
         summary=result['summary']
         self.event_cards.setText(
-            f"<h2>{shooter['display_name']} — {self.season}</h2>"
+            f"<h2>{shooter['display_name']} ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â {self.season}</h2>"
             f"<b>{summary['event_rows']}</b> imported event rows &nbsp;&nbsp; "
             f"<b>{summary['total_targets']:,}</b> targets &nbsp;&nbsp; "
             f"<b>{summary['clubs']}</b> clubs &nbsp;&nbsp; "
@@ -525,7 +685,7 @@ class MainWindow(QMainWindow):
         cut_text=(
             'Not established'
             if old_cut is None or new_cut is None
-            else f"{old_cut:.2f}% → {new_cut:.2f}% ({cut_change:+.2f})"
+            else f"{old_cut:.2f}% ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ {new_cut:.2f}% ({cut_change:+.2f})"
         )
         self.changes_cards.setText(
             f"<h2>{self.season} {team} Race Changes</h2>"
@@ -591,7 +751,7 @@ class MainWindow(QMainWindow):
         shooter=self.shooter_rows[idx.row()]; sid=shooter['id']
         found=self.db.query('SELECT * FROM season_stats WHERE shooter_id=? AND season=?',(sid,self.season))
         row=found[0] if found else {}
-        d=QDialog(self); d.setWindowTitle(f"{shooter['display_name']} — {self.season} statistics"); f=QFormLayout(d); fields={}
+        d=QDialog(self); d.setWindowTitle(f"{shooter['display_name']} ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â {self.season} statistics"); f=QFormLayout(d); fields={}
         for disc in ('singles','handicap','doubles'):
             box=QSpinBox(); box.setRange(0,200000); box.setValue(int(row.get(f'{disc}_targets') or 0)); fields[f'{disc}_targets']=box; f.addRow(f'{disc.title()} targets',box)
             hits=QSpinBox(); hits.setRange(0,200000); hits.setValue(int(row.get(f'{disc}_hits') or 0)); fields[f'{disc}_hits']=hits; f.addRow(f'{disc.title()} hits',hits)
@@ -677,3 +837,8 @@ class MainWindow(QMainWindow):
     def export_pdf(self): QMessageBox.information(self,'Export',f'Created {self.ex.pdf_team(self.season,self.team_box.currentText())}')
     def save_settings(self):
         self.settings['season']=self.season; self.settings['user_ata_number']=self.user_ata.text(); self.settings['fuzzy_match_threshold']=self.threshold.value(); (CONFIG/'settings.json').write_text(json.dumps(self.settings,indent=2)); QMessageBox.information(self,'Settings','Settings saved.')
+
+
+
+
+

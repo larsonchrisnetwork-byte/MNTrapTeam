@@ -15,6 +15,11 @@ def main() -> int:
     parser.add_argument("--season", type=int, required=True)
     parser.add_argument("--club", default="")
     parser.add_argument("--all-states", action="store_true")
+    parser.add_argument(
+        "--out-of-state",
+        action="store_true",
+        help="Count this shoot toward total targets/HOA but not Minnesota target minimums",
+    )
     args = parser.parse_args()
 
     print("Downloading public ShootScoreBoard reports...")
@@ -29,6 +34,7 @@ def main() -> int:
         args.season,
         mn_only=not args.all_states,
         club=args.club,
+        in_state=not args.out_of_state,
     )
     print(f"Imported score rows: {result.score_rows_imported}")
     print(f"New shooter records: {result.shooters_created}")

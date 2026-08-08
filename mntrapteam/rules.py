@@ -13,7 +13,16 @@ class RulesEngine:
         self.path=Path(path); self.rules=json.loads(self.path.read_text(encoding='utf-8'))
     def team_for_category(self,category:str|None)->str:
         c=(category or 'MEN').upper().replace('-','_').replace(' ','_')
-        aliases={'LADY_I':'LADY','LADY_II':'LADY','SUB_VET':'MEN','SUBVET':'MEN','SENIOR_VET':'SR_VET','SENIOR_VETERAN':'SR_VET','SRVET':'SR_VET','SUB_JUNIOR':'SUB_JR','SUBJR':'SUB_JR','JUNIOR_GOLD':'JUNIOR'}
+        aliases={
+            'L':'LADY','L1':'LADY','L2':'LADY',
+            'LADY1':'LADY','LADY2':'LADY','LADY_I':'LADY','LADY_II':'LADY',
+            'SBV':'MEN','SUB_VET':'MEN','SUBVET':'MEN','SUB_VETERAN':'MEN',
+            'V':'VET','VT':'VET','VETERAN':'VET',
+            'SRV':'SR_VET','SRVT':'SR_VET','SENIOR_VET':'SR_VET',
+            'SENIOR_VETERAN':'SR_VET','SRVET':'SR_VET',
+            'J':'JUNIOR','JR':'JUNIOR','JUNIOR_GOLD':'JUNIOR',
+            'SJ':'SUB_JR','SUB_JUNIOR':'SUB_JR','SUBJR':'SUB_JR',
+        }
         return aliases.get(c,c if c in self.rules['teams'] else 'MEN')
     def check(self,row:dict,requested_team:str|None=None)->EligibilityResult:
         team=requested_team or self.team_for_category(row.get('category_declared') or row.get('category'))

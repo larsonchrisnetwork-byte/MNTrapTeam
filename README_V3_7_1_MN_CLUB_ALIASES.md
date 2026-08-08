@@ -1,0 +1,1 @@
+Adds exact Minnesota aliases for MINNESOTA TRAP ASSN, BEAVER BROOK TRI-COUNTY GUN CLUB, BEMIDJI TRAP AND SKEET GUN CLUB, and MN CLAY TARGET SPORTS (GRAND RAPIDS). Re-run the 5-shooter dry run after applying.

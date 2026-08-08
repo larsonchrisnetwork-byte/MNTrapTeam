@@ -1,0 +1,22 @@
+{
+  "FOLEY": "Benton",
+  "WACONIA": "Carver",
+  "LE SUEUR": "Le Sueur",
+  "BELLE PLAINE": "Scott",
+  "SILVER LAKE": "McLeod",
+  "GLENCOE": "McLeod",
+  "GLENCO": "McLeod",
+  "HARTLAND": "Freeborn",
+  "ROCHESTER": "Olmsted",
+  "WORTHINGTON": "Nobles",
+  "MAYER": "Carver",
+  "CHANHASSEN": "Carver",
+  "NEW GERMANY": "Carver",
+  "NORWOOD YOUNG AMERICA": "Carver",
+  "ALDEN": "Freeborn",
+  "VERNON CENTER": "Blue Earth",
+  "NEW PRAGUE": [
+    "Scott",
+    "Le Sueur"
+  ]
+}
