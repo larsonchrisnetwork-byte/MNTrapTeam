@@ -270,7 +270,8 @@ class MainWindow(QMainWindow):
             f"<b>{summary['fully_qualified']}</b> fully qualified &nbsp;&nbsp; "
             f"<b>{summary['haa_qualified']}</b> HAA-qualified &nbsp;&nbsp; "
             f"<b>{summary['selected']}/{summary['team_size']}</b> current team &nbsp;&nbsp; "
-            f"<b>Current cut:</b> {cut_text}<br>"
+            f"<b>Current qualified cut:</b> {cut_text} &nbsp;&nbsp; "
+            f"<b>{summary['unqualified_above_cut']}</b> unqualified shooters currently above cut<br>"
             f"<b>{summary['provisional_shooters']}</b> shooters with newer unofficial scores &nbsp;&nbsp; "
             f"<b>{summary['pending_targets']:,}</b> targets pending MyATA confirmation &nbsp;&nbsp; "
             f"<b>{summary['baseline_ready']}</b> shooters safe for provisional overlay"
@@ -280,7 +281,7 @@ class MainWindow(QMainWindow):
             DictModel(
                 result["rows"],
                 [
-                    ("race_rank","Race Rank"),
+                    ("race_rank","All-Candidate Rank"),
                     ("qualified_rank","Qualified Rank"),
                     ("live_team","Team"),
                     ("qualification_status","Qualified?"),
@@ -299,6 +300,8 @@ class MainWindow(QMainWindow):
                     ("current_mn_handicap","MN Handicap"),
                     ("current_mn_doubles","MN Doubles"),
                     ("current_mn_clubs","MN Clubs"),
+                    ("higher_hoa_unqualified","Higher-HOA Threats"),
+                    ("threats_needed_to_displace","Threats Needed"),
                     ("need_to_qualify","What They Need"),
                     ("pending_targets","Pending Targets"),
                     ("baseline_status","Baseline Ready"),
@@ -338,10 +341,16 @@ class MainWindow(QMainWindow):
             f"{shooter['display_name']}\n"
             f"HAA: {shooter['haa_gate']} {shooter['haa_route']}\n"
             f"Eligible: {'Yes' if shooter.get('eligible') else 'No'}\n"
+            f"Qualified rank: {shooter.get('qualified_rank') or '-'}\n"
+            f"All-candidate rank: {shooter.get('race_rank') or '-'}\n"
             f"Live HOA: {shooter['live_hoa']:.2f}%\n"
             f"Official HOA: {shooter['official_hoa']:.2f}%\n"
+            f"Higher-HOA unqualified threats: "
+            f"{shooter.get('higher_hoa_unqualified', 0)}\n"
+            f"Threats needed to move below team: "
+            f"{shooter.get('threats_needed_to_displace') or '-'}\n"
             f"Pending targets: {shooter['pending_targets']}\n"
-            f"Gap to live cut: {gap_text}"
+            f"Gap to current qualified cut: {gap_text}"
         )
         QMessageBox.information(self,"My live team position",message)
 

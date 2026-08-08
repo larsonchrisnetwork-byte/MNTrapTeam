@@ -2,6 +2,7 @@ from mntrapteam.live_dashboard import (
     _hoa_from_disciplines,
     _provisional_after_baseline,
     _season_values,
+    _threat_context,
 )
 
 
@@ -113,3 +114,25 @@ def test_duplicate_live_sources_count_same_events_once():
         "handicap": 200,
         "doubles": 100,
     }
+
+
+
+def test_threat_context_for_tenth_place_shooter():
+    me = {
+        "current_hoa": 92.042,
+        "current_eligible": True,
+        "qualified_rank": 10,
+    }
+    threats = [
+        {
+            "current_hoa": 93.0 + i / 100,
+            "current_eligible": False,
+        }
+        for i in range(13)
+    ]
+
+    result = _threat_context([me] + threats, me, team_size=16)
+
+    assert result["higher_hoa_unqualified"] == 13
+    assert result["threats_needed_to_displace"] == 7
+    assert result["threat_risk"] is True

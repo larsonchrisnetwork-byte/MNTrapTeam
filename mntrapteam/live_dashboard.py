@@ -200,6 +200,31 @@ def _progress(team_service, row, haa_qualified, current_values, current_mn, curr
     return eligible, missing
 
 
+
+def _threat_context(rows, row, team_size):
+    hoa = float(row.get("current_hoa") or 0.0)
+
+    higher_unqualified = sum(
+        1
+        for candidate in rows
+        if not candidate.get("current_eligible")
+        and float(candidate.get("current_hoa") or 0.0) > hoa
+    )
+
+    qualified_rank = row.get("qualified_rank")
+    threats_needed = None
+    if qualified_rank is not None and int(qualified_rank) <= int(team_size):
+        threats_needed = int(team_size) - int(qualified_rank) + 1
+
+    return {
+        "higher_hoa_unqualified": higher_unqualified,
+        "threats_needed_to_displace": threats_needed,
+        "threat_risk": (
+            threats_needed is not None
+            and higher_unqualified >= threats_needed
+        ),
+    }
+
 def live_team_rows(database, team_service, season: int, team: str = "MEN"):
     rankings = team_service.rankings(season, team)
     ensure_baseline_schema(database)
@@ -357,6 +382,7 @@ def live_team_rows(database, team_service, season: int, team: str = "MEN"):
             if live_cut is not None
             else None
         )
+        row.update(_threat_context(rows, row, team_size))
 
     return {
         "summary": {
@@ -368,6 +394,13 @@ def live_team_rows(database, team_service, season: int, team: str = "MEN"):
             "eligible_qualified": len(fully_qualified),
             "selected": len(selected),
             "live_cut_hoa": live_cut,
+            "unqualified_above_cut": sum(
+                1
+                for r in rows
+                if not r["current_eligible"]
+                and live_cut is not None
+                and float(r["current_hoa"]) > live_cut
+            ),
             "pending_targets": sum(int(r["pending_targets"]) for r in rows),
             "provisional_shooters": sum(
                 int(r["pending_targets"]) > 0 for r in rows
